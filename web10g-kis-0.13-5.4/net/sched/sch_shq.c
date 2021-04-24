@@ -42,6 +42,7 @@ struct shq_vars {
 /* statistics gathering */
 struct shq_stats {
         u32 prob;               /* current probability */
+        u64 qdelay;             /* current queuing delay */
         u32 avg_rate;           /* current average rate */
 	u32 packets_in;		/* total number of packets enqueued */
 	u32 dropped;		/* packets dropped due to shq_action */
@@ -130,6 +131,11 @@ static int shq_qdisc_enqueue(struct sk_buff *skb, struct Qdisc *sch,
 	struct shq_sched_data *q = qdisc_priv(sch);
         psched_time_t delta;
 	bool enqueue = false;
+
+        /* Timestamp the packet in order to calculate
+         * the queue stats in the dequeue process.
+         */
+        __net_timestamp(skb);
 
 	if (unlikely(qdisc_qlen(sch) >= sch->limit)) {
 		q->stats.overlimit++;
@@ -284,6 +290,7 @@ static int shq_dump_stats(struct Qdisc *sch, struct gnet_dump *d)
 	struct shq_sched_data *q = qdisc_priv(sch);
 	struct tc_shq_xstats st = {
 		.prob		= q->vars.prob,
+                .qdelay         = q->qdelay,
 		/* unscale and return avg_rate in bytes per sec */
 		.avg_rate	= q->vars.avg_rate *
 				  (PSCHED_TICKS_PER_SEC) >> SHQ_SCALE,
@@ -299,10 +306,16 @@ static int shq_dump_stats(struct Qdisc *sch, struct gnet_dump *d)
 
 static struct sk_buff *shq_qdisc_dequeue(struct Qdisc *sch)
 {
+        u64 qdelay = 0;
 	struct sk_buff *skb = qdisc_dequeue_head(sch);
 
 	if (!skb)
 		return NULL;
+
+        /* >> 10 is approx /1000 */
+        qdelay = ((__force __u64)(ktime_get_real_ns() -
+                                ktime_to_ns(skb_get_ktime(skb)))) >> 10;
+        q->stats.qdelay = qdelay;
 
 	return skb;
 }
