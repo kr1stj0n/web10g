@@ -290,7 +290,7 @@ static int shq_dump_stats(struct Qdisc *sch, struct gnet_dump *d)
 	struct shq_sched_data *q = qdisc_priv(sch);
 	struct tc_shq_xstats st = {
 		.prob		= q->vars.prob,
-                .qdelay         = q->qdelay,
+                .qdelay         = q->stats.qdelay,
 		/* unscale and return avg_rate in bytes per sec */
 		.avg_rate	= q->vars.avg_rate *
 				  (PSCHED_TICKS_PER_SEC) >> SHQ_SCALE,
@@ -306,6 +306,7 @@ static int shq_dump_stats(struct Qdisc *sch, struct gnet_dump *d)
 
 static struct sk_buff *shq_qdisc_dequeue(struct Qdisc *sch)
 {
+        struct shq_sched_data *q = qdisc_priv(sch);
         u64 qdelay = 0;
 	struct sk_buff *skb = qdisc_dequeue_head(sch);
 
