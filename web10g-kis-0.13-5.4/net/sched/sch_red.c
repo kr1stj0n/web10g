@@ -61,6 +61,11 @@ static int red_enqueue(struct sk_buff *skb, struct Qdisc *sch,
 	struct Qdisc *child = q->qdisc;
 	int ret;
 
+        /* Timestamp the packet in order to calculate
+         * the queue stats in the dequeue process.
+         */
+        __net_timestamp(skb);
+
 	q->vars.qavg = red_calc_qavg(&q->parms,
 				     &q->vars,
 				     child->qstats.backlog);
@@ -114,6 +119,7 @@ static struct sk_buff *red_dequeue(struct Qdisc *sch)
 	struct sk_buff *skb;
 	struct red_sched_data *q = qdisc_priv(sch);
 	struct Qdisc *child = q->qdisc;
+        u64 qdelay = 0;
 
 	skb = child->dequeue(child);
 	if (skb) {
@@ -124,6 +130,11 @@ static struct sk_buff *red_dequeue(struct Qdisc *sch)
 		if (!red_is_idling(&q->vars))
 			red_start_of_idle_period(&q->vars);
 	}
+        /* >> 10 is approx /1000 */
+        qdelay = ((__force __u64)(ktime_get_real_ns() -
+                                ktime_to_ns(skb_get_ktime(skb)))) >> 10;
+        q->stats.qdelay = qdelay;
+
 	return skb;
 }
 
@@ -346,9 +357,10 @@ static int red_dump_stats(struct Qdisc *sch, struct gnet_dump *d)
 		dev->netdev_ops->ndo_setup_tc(dev, TC_SETUP_QDISC_RED,
 					      &hw_stats_request);
 	}
-	st.early = q->stats.prob_drop + q->stats.forced_drop;
-	st.pdrop = q->stats.pdrop;
-	st.other = q->stats.other;
+	st.early  = q->stats.prob_drop + q->stats.forced_drop;
+	st.pdrop  = q->stats.pdrop;
+	st.qdelay = q->stats.qdelay;
+	st.other  = q->stats.other;
 	st.marked = q->stats.prob_mark + q->stats.forced_mark;
 
 	return gnet_stats_copy_app(d, &st, sizeof(st));

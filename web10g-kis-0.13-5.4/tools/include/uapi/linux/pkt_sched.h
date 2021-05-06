@@ -276,6 +276,7 @@ struct tc_red_qopt {
 struct tc_red_xstats {
 	__u32           early;          /* Early drops */
 	__u32           pdrop;          /* Drops due to queue limits */
+        __u64           qdelay;         /* Current queuing delay */
 	__u32           other;          /* Drops due to drop() calls */
 	__u32           marked;         /* Marked packets */
 };
