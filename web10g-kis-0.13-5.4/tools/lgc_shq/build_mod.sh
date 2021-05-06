@@ -20,7 +20,7 @@ build_modules() {
 
     # SCH_RED
     CMD="sudo rmmod -f sch_red;
-         cp Makefile.shq ../../net/sched/Makefile;
+         cp Makefile.red ../../net/sched/Makefile;
          cd ../../ && sudo make modules_prepare && sudo make M=net/sched/ clean && sudo make M=net/sched/ modules && sudo make M=net/sched/ modules_install;
          sudo depmod -a;
          sudo cp /lib/modules/5.4.0/extra/sch_red.ko /lib/modules/5.4.0/kernel/net/sched/;
