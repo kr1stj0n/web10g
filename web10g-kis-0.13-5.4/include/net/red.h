@@ -122,6 +122,7 @@ struct red_stats {
 	u32		forced_drop;	/* Forced drops, qavg > max_thresh */
 	u32		forced_mark;	/* Forced marks, qavg > max_thresh */
 	u32		pdrop;          /* Drops due to queue limits */
+        u64             qdelay;         /* Current queuing delay */
 	u32		other;          /* Drops due to drop() calls */
 };
 
