@@ -33,7 +33,7 @@
 
 #define LGC_SHIFT	16
 #define ONE             (1U<<LGC_SHIFT)
-#define THRESSH         ((9*ONE)/10)    /* ~0.9 */
+#define THRESSH         ((9U<<LGC_SHIFT)/10U)    /* ~0.9 */
 
 struct lgc {
 	u32 old_delivered;
@@ -67,7 +67,7 @@ static unsigned int lgc_coef __read_mostly = 20;
 module_param(lgc_coef, uint, 0644);
 MODULE_PARM_DESC(lgc_coef, "lgc_coef");
 
-/* default lgc_max_rate = 125000000 bpms */
+/* default lgc_max_rate = 125000 bpms or 1Gbps */
 static unsigned int lgc_max_rate __read_mostly = 125000;
 module_param(lgc_max_rate, uint, 0644);
 MODULE_PARM_DESC(lgc_max_rate, "lgc_max_rate");
@@ -94,6 +94,7 @@ static void lgc_init(struct sock *sk)
 		ca->prior_rcv_nxt = tp->rcv_nxt;
 		ca->loss_cwnd = 0;
                 ca->rate_eval = 0;
+                ca->fraction  = 0U;
 		lgc_reset(tp, ca);
 		return;
 	}
@@ -151,7 +152,7 @@ static void lgc_update_rate(struct sock *sk, u32 flags)
                 }
 
                 if (ca->fraction >= ONE)
-                        ca->fraction = (98 * ONE) / 100;
+                        ca->fraction = (99 * ONE) / 100;
 
                 /* after the division, q is FP << 16 */
                 u32 q = 0U;
@@ -179,7 +180,7 @@ static void lgc_update_rate(struct sock *sk, u32 flags)
                 grXrateXgradient64 += rate64;
                 u32 newRate = (u32)(grXrateXgradient64 >> 32);
 
-                if (newRate > 2 * lgc_max_rate)
+                if (newRate > (rate << 1))
                         rate <<= 1;
                 else
                         rate = newRate;
