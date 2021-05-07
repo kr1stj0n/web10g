@@ -18,6 +18,7 @@
 #include <net/inet_ecn.h>
 
 #define SHQ_SCALE 24
+#define SHQ_SCALE2 8
 #define ONE (1U<<SHQ_SCALE)
 
 /* parameters used */
@@ -83,7 +84,7 @@ static bool should_mark(struct Qdisc *sch)
 	struct shq_sched_data *q = qdisc_priv(sch);
         u32 rand = 0U;
         /* Generate a random 4-byte number */
-	prandom_bytes(&rand, 4);
+	prandom_bytes(&rand, 3);
         if (rand < q->vars.prob)
 		return true;
 
@@ -98,7 +99,7 @@ static void calc_probability(struct Qdisc *sch, psched_time_t delta)
         u32 prob32;
 
         q->vars.cur_qlen += sch->qstats.backlog;       /* queue size in bytes */
-        cur_qlen = (u64)(q->vars.cur_qlen << (SHQ_SCALE / 3));
+        cur_qlen = (u64)(q->vars.cur_qlen << SHQ_SCALE2);
         avg_qlen = (u64)q->vars.avg_qlen;
 
         avg_qlen = (u64)((u64)(ONE - q->params.alpha) * avg_qlen) +
@@ -112,7 +113,7 @@ static void calc_probability(struct Qdisc *sch, psched_time_t delta)
 
         avg_qlen *= (u64)(q->params.maxp);
         do_div(avg_qlen, (u32)max_bytes);
-        prob32 = (u32)avg_qlen;
+        prob32 = (u32)(avg_qlen >> SHQ_SCALE2);
         if (prob32 > q->params.maxp)
                 prob32 = q->params.maxp;
 
