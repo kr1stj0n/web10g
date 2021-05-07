@@ -33,14 +33,14 @@ build_modules() {
     # TCP_LGC
     CMD="sudo rmmod -f tcp_lgc;
          cp Makefile.lgc ../../net/ipv4/Makefile;
-         cd ../../ && sudo modules_prepare && sudo make M=net/ipv4/ clean && sudo make M=net/ipv4/ modules && sudo make M=net/ipv4/ modules_install;
+         cd ../../ && sudo make modules_prepare && sudo make M=net/ipv4/ clean && sudo make M=net/ipv4/ modules && sudo make M=net/ipv4/ modules_install;
          sudo depmod -a;
          sudo cp /lib/modules/5.4.0/extra/tcp_lgc.ko /lib/modules/5.4.0/kernel/net/ipv4/;
          sudo depmod -a;
          cp Makefile.ipv4.init net/ipv4/Makefile;
          sudo modprobe tcp_lgc"
 
-    # eval $CMD
+    eval $CMD
 
 }
 
