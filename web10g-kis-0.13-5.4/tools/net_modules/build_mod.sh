@@ -13,7 +13,7 @@ build_modules() {
          sudo depmod -a;
          sudo cp /lib/modules/5.4.0/extra/sch_shq.ko /lib/modules/5.4.0/kernel/net/sched/;
          sudo depmod -a;
-         cp Makefile.sched.init ../../net/sched/Makefile;
+         cp tools/net_modules/Makefile.sched.init net/sched/Makefile;
          sudo modprobe sch_shq"
 
     eval $CMD
@@ -25,7 +25,7 @@ build_modules() {
          sudo depmod -a;
          sudo cp /lib/modules/5.4.0/extra/sch_red.ko /lib/modules/5.4.0/kernel/net/sched/;
          sudo depmod -a;
-         cp Makefile.sched.init ../../net/sched/Makefile;
+         cp tools/net_modules/Makefile.sched.init net/sched/Makefile;
          sudo modprobe sch_red"
 
     eval $CMD
@@ -37,7 +37,7 @@ build_modules() {
          sudo depmod -a;
          sudo cp /lib/modules/5.4.0/extra/tcp_lgc.ko /lib/modules/5.4.0/kernel/net/ipv4/;
          sudo depmod -a;
-         cp Makefile.ipv4.init net/ipv4/Makefile;
+         cp tools/net_modules/Makefile.ipv4.init net/ipv4/Makefile;
          sudo modprobe tcp_lgc"
 
     eval $CMD
