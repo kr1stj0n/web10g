@@ -195,9 +195,9 @@ static void lgc_update_rate(struct sock *sk, u32 flags)
                         scaled_rate = (lgc_max_rate << LGC_SHIFT);
 
                 rtt = max(tp->srtt_us >> 3, 1U);
-                rtt <<= 8; rtt /= USEC_PER_MSEC;
                 cwnd_B = (u64)scaled_rate * (u64)rtt;
-                cwnd_B >>= 24;
+                cwnd_B /= USEC_PER_MSEC;
+                cwnd_B >>= 16;
 		do_div(cwnd_B, tp->mss_cache);
                 tp->snd_cwnd = max((u32)cwnd_B, 2U);
 
