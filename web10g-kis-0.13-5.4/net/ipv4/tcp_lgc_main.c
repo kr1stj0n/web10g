@@ -162,7 +162,8 @@ static void lgc_update_rate(struct sock *sk, u32 flags)
                         q = 0U;
 
                 u32 rate = ca->rate;
-                s32 gradient = (ONE) - ((rate<<LGC_SHIFT) / lgc_max_rate) - q;
+                /* s32 gradient = (ONE) - ((rate<<LGC_SHIFT) / lgc_max_rate) - q; */
+                s32 gradient = (ONE) - ((rate) / lgc_max_rate) - q;
 
                 u32 gr = 0U;
                 if (delivered_ce)
@@ -176,24 +177,27 @@ static void lgc_update_rate(struct sock *sk, u32 flags)
                 grXrateXgradient *= rate64;
                 s64 grXrateXgradient64 = (s64)grXrateXgradient;
                 grXrateXgradient64 *= (s64)gradient;
-                rate64 <<= 32;
+                /* rate64 <<= 16; */
+                grXrateXgradient64 >> 32;
                 grXrateXgradient64 += rate64;
-                u32 newRate = (u32)(grXrateXgradient64 >> 32);
+                /* u32 newRate = (u32)(grXrateXgradient64 >> LGC_SHIFT); */
+                u32 newRate = (u32)(grXrateXgradient64);
 
-                if (newRate > (rate << 1))
-                        rate <<= 1;
+                u32 scaled_rate = (rate);
+                if (newRate > (scaled_rate << 1))
+                        scaled_rate <<= 1;
                 else
-                        rate = newRate;
+                        scaled_rate = newRate;
 
-                if (rate <= 0U)
-                        rate = 2U;
-                if (rate > lgc_max_rate)
-                        rate = lgc_max_rate;
+                if (scaled_rate <= 0U)
+                        scaled_rate = 2U << 16;
+                if (scaled_rate > (lgc_max_rate << LGC_SHIFT))
+                        scaled_rate = (lgc_max_rate << LGC_SHIFT);
 
                 rtt = max(tp->srtt_us >> 3, 1U);
                 rtt <<= 8; rtt /= USEC_PER_MSEC;
-                cwnd_B = (u64)rate * (u64)rtt;
-                cwnd_B >>= 8;
+                cwnd_B = (u64)scaled_rate * (u64)rtt;
+                cwnd_B >>= 24;
 		do_div(cwnd_B, tp->mss_cache);
                 tp->snd_cwnd = max((u32)cwnd_B, 2U);
 
@@ -201,7 +205,7 @@ static void lgc_update_rate(struct sock *sk, u32 flags)
 		 * synchro, so we ask compiler to not use rate
 		 * as a temporary variable in prior operations.
 		 */
-		WRITE_ONCE(ca->rate, rate);
+		WRITE_ONCE(ca->rate, scaled_rate);
 		lgc_reset(tp, ca);
 	}
 }
