@@ -16,7 +16,7 @@ build_modules() {
          cp tools/net_modules/Makefile.sched.init net/sched/Makefile;
          sudo modprobe sch_shq"
 
-    eval $CMD
+    #eval $CMD
 
     # SCH_RED
     CMD="sudo rmmod -f sch_red;
@@ -28,7 +28,7 @@ build_modules() {
          cp tools/net_modules/Makefile.sched.init net/sched/Makefile;
          sudo modprobe sch_red"
 
-    eval $CMD
+    #eval $CMD
 
     # TCP_LGC
     CMD="sudo rmmod -f tcp_lgc;
@@ -40,7 +40,7 @@ build_modules() {
          cp tools/net_modules/Makefile.ipv4.init net/ipv4/Makefile;
          sudo modprobe tcp_lgc"
 
-    eval $CMD
+    #eval $CMD
 
 }
 

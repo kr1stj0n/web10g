@@ -67,8 +67,8 @@ static unsigned int lgc_coef __read_mostly = 20;
 module_param(lgc_coef, uint, 0644);
 MODULE_PARM_DESC(lgc_coef, "lgc_coef");
 
-/* default lgc_max_rate = 125000 bpms or 1Gbps */
-static unsigned int lgc_max_rate __read_mostly = 125000;
+/* default lgc_max_rate = 12500 bpms or 100Mbps */
+static unsigned int lgc_max_rate __read_mostly = 12500;
 module_param(lgc_max_rate, uint, 0644);
 MODULE_PARM_DESC(lgc_max_rate, "lgc_max_rate");
 /* End of Module parameters */
@@ -120,18 +120,17 @@ static void lgc_update_rate(struct sock *sk, u32 flags)
 {
 	struct tcp_sock *tp = tcp_sk(sk);
 	struct lgc *ca = inet_csk_ca(sk);
-        u64 cwnd_B;
+        u32 init_rate;
         u32 rtt;
 
 	/* Expired RTT */
 	if (!before(tp->snd_una, ca->next_seq)) {
                 if (!ca->rate_eval) {
-                        /* Calculate initial rate in bytes/msec */
-                        cwnd_B = (u64)tp->snd_cwnd * (u64)tp->mss_cache *
-                                          USEC_PER_MSEC;
+                        /* Calculate the initial rate in bytes/msec */
+                        init_rate = tp->snd_cwnd * tp->mss_cache * USEC_PER_MSEC;
                         rtt = max(tp->srtt_us >> 3, 1U);
-                        do_div(cwnd_B, rtt);
-                        ca->rate = (u32)cwnd_B + 1;
+                        ca->rate = init_rate / rtt;
+                        ca->rate <<= LGC_SHIFT;
                         ca->rate_eval = 1;
                 }
 
@@ -144,32 +143,28 @@ static void lgc_update_rate(struct sock *sk, u32 flags)
                 u32 fraction = 0U;
                 if (delivered_ce >= THRESSH) {
                         fraction = (ONE - lgc_alpha_scaled) * ca->fraction +
-                                   lgc_alpha_scaled * delivered_ce;
+                                              (lgc_alpha_scaled * delivered_ce);
                         ca->fraction = fraction >> LGC_SHIFT;
                 } else {
                         fraction = (ONE - lgc_alpha_scaled) * ca->fraction;
                         ca->fraction = fraction >> LGC_SHIFT;
                 }
-
                 if (ca->fraction >= ONE)
-                        ca->fraction = (99 * ONE) / 100;
+                        ca->fraction = (99U * ONE) / 100U;
+
+                /* At this point we have a ca->fraction = [0,1) << LGC_SHIFT */
 
                 /* after the division, q is FP << 16 */
                 u32 q = 0U;
                 if (ca->fraction)
                         q = lgc_log_lut_lookup(ca->fraction) / lgc_logPhi_scaled;
-                else
-                        q = 0U;
 
                 u32 rate = ca->rate;
-                /* s32 gradient = (ONE) - ((rate<<LGC_SHIFT) / lgc_max_rate) - q; */
-                s32 gradient = (ONE) - ((rate) / lgc_max_rate) - q;
+                s32 gradient = (s32)((s32)ONE - (s32)(rate / lgc_max_rate) - (s32)q);
 
-                u32 gr = 0U;
+                u32 gr = 1U << 30;
                 if (delivered_ce)
-                        gr = lgc_exp_lut_lookup(delivered_ce);
-                else
-                        gr = 1U << 30;
+                        gr = lgc_exp_lut_lookup(delivered_ce); /* gr is 30-bit scaled */
 
                 u64 rate64 = (u64)rate;
                 u64 grXrateXgradient = (u64)gr * (u64)lgc_logP_scaled;
@@ -178,10 +173,11 @@ static void lgc_update_rate(struct sock *sk, u32 flags)
                 s64 grXrateXgradient64 = (s64)grXrateXgradient;
                 grXrateXgradient64 *= (s64)gradient;
                 /* rate64 <<= 16; */
-                grXrateXgradient64 >> 32;
+                grXrateXgradient64 >>= 32;
                 grXrateXgradient64 += rate64;
                 /* u32 newRate = (u32)(grXrateXgradient64 >> LGC_SHIFT); */
-                u32 newRate = (u32)(grXrateXgradient64);
+                u64 newRate64 = (u64)(grXrateXgradient64);
+                u32 newRate = (u32)newRate64;
 
                 u32 scaled_rate = (rate);
                 if (newRate > (scaled_rate << 1))
@@ -195,7 +191,7 @@ static void lgc_update_rate(struct sock *sk, u32 flags)
                         scaled_rate = (lgc_max_rate << LGC_SHIFT);
 
                 rtt = max(tp->srtt_us >> 3, 1U);
-                cwnd_B = (u64)scaled_rate * (u64)rtt;
+                u64 cwnd_B = (u64)scaled_rate * (u64)rtt;
                 cwnd_B /= USEC_PER_MSEC;
                 cwnd_B >>= 16;
 		do_div(cwnd_B, tp->mss_cache);

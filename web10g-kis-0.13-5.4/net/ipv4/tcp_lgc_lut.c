@@ -7288,12 +7288,12 @@ const u32 lgc_exp_lut[LGC_LUT_SIZE] = {
 53723915, 53721459, 53719004, 53716548, 53714093, 53711637, 53709182, 53706727, 53704272, 53701817, 53699363, 53696908, 53694454, 53691999, 53689545
 };
 
-inline u32 lgc_log_lut_lookup(u16 fraction)
+inline u32 lgc_log_lut_lookup(u32 fraction)
 {
 	return (u32) lgc_log_lut[LGC_LUT_SIZE - fraction];
 }
 
-inline u32 lgc_exp_lut_lookup(u16 fraction)
+inline u32 lgc_exp_lut_lookup(u32 fraction)
 {
 	return (u32) lgc_exp_lut[fraction];
 }
