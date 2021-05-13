@@ -54,9 +54,10 @@ sudo reboot
 
 ```bash
 cd web10g-dlkm
-sudo make all
-sudo cp tcp_estats_nl.ko /lib/modules/5.4.0/kernel/net/ipv4/
-sudo depmod -a
+sudo -s
+make all
+cp tcp_estats_nl.ko /lib/modules/5.4.0/kernel/net/ipv4/
+depmod -a
 ```
 
 - Make a quick test to see whether the module can be loaded.

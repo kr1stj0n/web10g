@@ -706,6 +706,9 @@ choice
 	config DEFAULT_DCTCP
 		bool "DCTCP" if TCP_CONG_DCTCP=y
 
+	config DEFAULT_LGC
+		bool "LGC" if TCP_CONG_LGC=y
+
 	config DEFAULT_CDG
 		bool "CDG" if TCP_CONG_CDG=y
 
@@ -734,6 +737,7 @@ config DEFAULT_TCP_CONG
 	default "veno" if DEFAULT_VENO
 	default "reno" if DEFAULT_RENO
 	default "dctcp" if DEFAULT_DCTCP
+	default "lgc" if DEFAULT_LGC
 	default "cdg" if DEFAULT_CDG
 	default "bbr" if DEFAULT_BBR
 	default "cubic"
