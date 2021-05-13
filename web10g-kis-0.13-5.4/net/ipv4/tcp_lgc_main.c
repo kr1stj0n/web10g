@@ -126,6 +126,8 @@ static void lgc_update_rate(struct sock *sk, u32 flags)
 	/* Expired RTT */
 	if (!before(tp->snd_una, ca->next_seq)) {
                 if (!ca->rate_eval) {
+                        if (!(tp->srtt_us >> 3))
+                                return;
                         /* Calculate the initial rate in bytes/msec */
                         init_rate = tp->snd_cwnd * tp->mss_cache * USEC_PER_MSEC;
                         rtt = max(tp->srtt_us >> 3, 1U);
@@ -163,8 +165,12 @@ static void lgc_update_rate(struct sock *sk, u32 flags)
                 s32 gradient = (s32)((s32)ONE - (s32)(rate / lgc_max_rate) - (s32)q);
 
                 u32 gr = 1U << 30;
-                if (delivered_ce)
-                        gr = lgc_exp_lut_lookup(delivered_ce); /* gr is 30-bit scaled */
+                if (delivered_ce == ONE)
+                        gr /= lgc_coef;
+                else {
+                        if (delivered_ce)
+                                gr = lgc_exp_lut_lookup(delivered_ce); /* gr is 30-bit scaled */
+                }
 
                 u64 rate64 = (u64)rate;
                 u64 grXrateXgradient = (u64)gr * (u64)lgc_logP_scaled;
