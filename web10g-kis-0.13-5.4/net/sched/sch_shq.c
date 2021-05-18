@@ -82,15 +82,15 @@ static bool should_mark(struct Qdisc *sch)
 	struct shq_sched_data *q = qdisc_priv(sch);
         u64 rand = 0ULL;
         /* Generate a random 4-byte number */
-	/* prandom_bytes(&rand, 4); */
-        rand = (u64)(((u64) prandom_u32() * UINT_MAX) >> 32)
+	prandom_bytes(&rand, 4);
+        /* rand = (u64)(((u64) prandom_u32() * UINT_MAX) >> 32); */
         if (rand < q->stats.prob)
 		return true;
 
 	return false;
 }
 
-static void calc_probability(struct Qdisc *sch, psched_time_t delta)
+static void calc_probability(struct Qdisc *sch, psched_tdiff_t delta)
 {
 	struct shq_sched_data *q = qdisc_priv(sch);
         u64 avg_qlen  = q->vars.avg_qlen;
@@ -107,8 +107,7 @@ static void calc_probability(struct Qdisc *sch, psched_time_t delta)
 
         /* Calculate the maximum number of incoming bytes during the interval */
         max_bytes = (u64)((u64)(q->params.bandwidth / MSEC_PER_SEC) *
-                                                 (u64)(PSCHED_TICKS2NS(delta)));
-        printk(KERN_INFO "Expected bytes during interval = %u\n", (u32)(max_bytes / NSEC_PER_MSEC));
+                                                 (u32)(PSCHED_TICKS2NS(delta)));
         avg_qlen *= q->params.maxp;
         do_div(avg_qlen, (u32)(max_bytes / NSEC_PER_MSEC));
 
@@ -129,7 +128,7 @@ static int shq_qdisc_enqueue(struct sk_buff *skb, struct Qdisc *sch,
                              struct sk_buff **to_free)
 {
 	struct shq_sched_data *q = qdisc_priv(sch);
-        psched_time_t delta;
+        psched_tdiff_t delta;
 	bool enqueue = false;
 
         /* Timestamp the packet in order to calculate
