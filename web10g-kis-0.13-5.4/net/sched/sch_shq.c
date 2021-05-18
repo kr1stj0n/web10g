@@ -80,9 +80,10 @@ static void shq_vars_init(struct shq_vars *vars)
 static bool should_mark(struct Qdisc *sch)
 {
 	struct shq_sched_data *q = qdisc_priv(sch);
-        u64 rand = 0U;
-        /* Generate a random 4-byte number */
-	prandom_bytes(&rand, 4);
+        u64 rand = 0ULL;
+        /* Generate a random 8-byte number */
+	prandom_bytes(&rand, 8);
+        rand >>= 32;
         if (rand < q->stats.prob)
 		return true;
 
