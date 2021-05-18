@@ -291,8 +291,7 @@ static int shq_dump_stats(struct Qdisc *sch, struct gnet_dump *d)
 		.prob		= q->stats.prob,
                 .qdelay         = q->stats.qdelay,
 		/* unscale and return avg_rate in bytes per sec */
-		.avg_rate	= q->vars.avg_rate *
-				  (PSCHED_TICKS_PER_SEC) >> SHQ_BIG_SCALE,
+		.avg_rate	= q->vars.avg_rate * PSCHED_TICKS_PER_SEC,
 		.packets_in	= q->stats.packets_in,
 		.dropped	= q->stats.dropped,
 		.overlimit	= q->stats.overlimit,
