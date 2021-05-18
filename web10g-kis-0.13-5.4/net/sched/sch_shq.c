@@ -83,7 +83,7 @@ static bool should_mark(struct Qdisc *sch)
         u64 rand = 0ULL;
         /* Generate a random 4-byte number */
 	/* prandom_bytes(&rand, 4); */
-        rand = (u64)prandom_u32();
+        rand = (u64)(((u64) prandom_u32() * UINT_MAX) >> 32)
         if (rand < q->stats.prob)
 		return true;
 
@@ -104,13 +104,13 @@ static void calc_probability(struct Qdisc *sch, psched_time_t delta)
                                        (u64)(cur_qlen * (u64)(q->params.alpha));
         avg_qlen >>= SHQ_SCALE_16;
         q->vars.avg_qlen = avg_qlen;
-        avg_qlen *= q->params.maxp;
 
         /* Calculate the maximum number of incoming bytes during the interval */
         max_bytes = (u64)((u64)(q->params.bandwidth / MSEC_PER_SEC) *
                                                  (u64)(PSCHED_TICKS2NS(delta)));
-        do_div(max_bytes, NSEC_PER_MSEC);
-        do_div(avg_qlen, (u32)max_bytes);
+        printk(KERN_INFO "Expected bytes during interval = %u\n", (u32)(max_bytes / NSEC_PER_MSEC));
+        avg_qlen *= q->params.maxp;
+        do_div(avg_qlen, (u32)(max_bytes / NSEC_PER_MSEC));
 
         /* The probability value should not exceed Max. probability */
         u64 tmp_maxp = (u64)q->params.maxp; tmp_maxp <<= SHQ_SCALE_16;
