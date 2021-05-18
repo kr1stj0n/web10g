@@ -17,9 +17,9 @@
 #include <net/pkt_sched.h>
 #include <net/inet_ecn.h>
 
-#define SHQ_BIG_SCALE   24
-#define SHQ_SMALL_SCALE 8
-#define ONE (1U<<SHQ_BIG_SCALE)
+#define SHQ_SCALE_32 32
+#define SHQ_SCALE_16 16
+#define ONE (1U<<SHQ_SCALE_16)
 
 /* parameters used */
 struct shq_params {
@@ -33,7 +33,6 @@ struct shq_params {
 
 /* variables used */
 struct shq_vars {
-	u32 prob;		/* probability but scaled by u64 limit. */
 	u64 avg_qlen;	        /* average length of the queue */
 	u64 cur_qlen;	        /* current length of the queue */
         u32 avg_rate;           /* bytes per pschedtime tick, scaled */
@@ -42,13 +41,13 @@ struct shq_vars {
 
 /* statistics gathering */
 struct shq_stats {
-        u32 prob;               /* current probability */
+        u64 prob;               /* current probability */
         u64 qdelay;             /* current queuing delay */
         u32 avg_rate;           /* current average rate */
 	u32 packets_in;		/* total number of packets enqueued */
 	u32 dropped;		/* packets dropped due to shq_action */
 	u32 overlimit;		/* dropped due to lack of space in queue */
-	u32 maxq;		/* maximum queue size ever seen */
+	u16 maxq;		/* maximum queue size ever seen */
 	u32 ecn_mark;		/* packets marked with ECN */
 };
 
@@ -72,7 +71,6 @@ static void shq_params_init(struct shq_params *params)
 
 static void shq_vars_init(struct shq_vars *vars)
 {
-        vars->prob     = 0U;
 	vars->avg_qlen = 0ULL;
 	vars->cur_qlen = 0ULL;
         vars->avg_rate = 0U;
@@ -82,10 +80,10 @@ static void shq_vars_init(struct shq_vars *vars)
 static bool should_mark(struct Qdisc *sch)
 {
 	struct shq_sched_data *q = qdisc_priv(sch);
-        u32 rand = 0U;
-        /* Generate a random 3-byte number */
-	prandom_bytes(&rand, 3);
-        if (rand < q->vars.prob)
+        u64 rand = 0U;
+        /* Generate a random 4-byte number */
+	prandom_bytes(&rand, 4);
+        if (rand < q->stats.prob)
 		return true;
 
 	return false;
@@ -97,36 +95,33 @@ static void calc_probability(struct Qdisc *sch, psched_time_t delta)
         u64 avg_qlen  = q->vars.avg_qlen;
         u64 cur_qlen  = q->vars.cur_qlen;
         u64 max_bytes = 0ULL;
-        u32 prob24    = 0U;
 
         cur_qlen += sch->qstats.backlog;               /* queue size in bytes */
-        cur_qlen <<= SHQ_SMALL_SCALE;
+        cur_qlen <<= SHQ_SCALE_16;
 
-        avg_qlen = (u64)((u64)(ONE - q->params.alpha) * avg_qlen) +
-                                       (u64)((u64)(q->params.alpha) * cur_qlen);
-        avg_qlen >>= SHQ_BIG_SCALE;
+        avg_qlen = (u64)(avg_qlen * (u64)(ONE - q->params.alpha)) +
+                                       (u64)(cur_qlen * (u64)(q->params.alpha));
+        avg_qlen >>= SHQ_SCALE_16;
         q->vars.avg_qlen = avg_qlen;
+        avg_qlen *= q->params.maxp;
 
         /* Calculate the maximum number of incoming bytes during the interval */
-        max_bytes = (u64)((q->params.bandwidth / MSEC_PER_SEC) *
+        max_bytes = (u64)((u64)(q->params.bandwidth / MSEC_PER_SEC) *
                                                  (u64)(PSCHED_TICKS2NS(delta)));
         do_div(max_bytes, NSEC_PER_MSEC);
-
-        avg_qlen *= q->params.maxp;
         do_div(avg_qlen, (u32)max_bytes);
-        prob24 = (u32)(avg_qlen >> SHQ_SMALL_SCALE);
 
         /* The probability value should not exceed Max. probability */
-        if (prob24 > q->params.maxp)
-                prob24 = q->params.maxp;
+        u64 tmp_maxp = (u64)q->params.maxp; tmp_maxp <<= SHQ_SCALE_16;
+        if (avg_qlen > tmp_maxp)
+                avg_qlen = tmp_maxp;
 
         /* Reset time and cur_qlen */
         q->vars.r_time   = psched_get_time();
         q->vars.cur_qlen = 0ULL;
 
-        /* Update vars and stats */
-        q->vars.prob  = prob24;
-        q->stats.prob = prob24;
+        /* Update stats */
+        q->stats.prob = avg_qlen;
 }
 
 static int shq_qdisc_enqueue(struct sk_buff *skb, struct Qdisc *sch,

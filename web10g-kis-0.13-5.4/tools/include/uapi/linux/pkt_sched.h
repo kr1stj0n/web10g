@@ -979,13 +979,13 @@ enum {
 #define TCA_SHQ_MAX   (__TCA_SHQ_MAX - 1)
 
 struct tc_shq_xstats {
-	__u32 prob;             /* current probability */
+	__u64 prob;             /* current probability */
 	__u64 qdelay;           /* current queuing delay */
 	__u32 avg_rate;         /* current average dq_rate in bits/pie_time */
 	__u32 packets_in;       /* total number of packets enqueued */
 	__u32 dropped;          /* packets dropped due to pie_action */
 	__u32 overlimit;        /* dropped due to lack of space in queue */
-	__u32 maxq;             /* maximum queue size */
+	__u16 maxq;             /* maximum queue size */
 	__u32 ecn_mark;         /* packets marked with ecn*/
 };
 
