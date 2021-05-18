@@ -19,7 +19,7 @@
 
 #define SHQ_SCALE_32 32
 #define SHQ_SCALE_16 16
-#define ONE (1U<<SHQ_SCALE_16)
+#define ONE (1U<<16)
 
 /* parameters used */
 struct shq_params {
@@ -81,9 +81,9 @@ static bool should_mark(struct Qdisc *sch)
 {
 	struct shq_sched_data *q = qdisc_priv(sch);
         u64 rand = 0ULL;
-        /* Generate a random 8-byte number */
-	prandom_bytes(&rand, 8);
-        rand >>= 32;
+        /* Generate a random 4-byte number */
+	/* prandom_bytes(&rand, 4); */
+        rand = (u64)prandom_u32();
         if (rand < q->stats.prob)
 		return true;
 
@@ -187,7 +187,7 @@ static int shq_change(struct Qdisc *sch, struct nlattr *opt,
 {
 	struct shq_sched_data *q = qdisc_priv(sch);
 	struct nlattr *tb[TCA_SHQ_MAX + 1];
-	u32 qlen, us, dropped = 0;
+	u32 qlen, us, dropped = 0U;
 	int err;
 
 	if (!opt)
@@ -306,7 +306,7 @@ static int shq_dump_stats(struct Qdisc *sch, struct gnet_dump *d)
 static struct sk_buff *shq_qdisc_dequeue(struct Qdisc *sch)
 {
         struct shq_sched_data *q = qdisc_priv(sch);
-        u64 qdelay = 0;
+        u64 qdelay = 0ULL;
 	struct sk_buff *skb = qdisc_dequeue_head(sch);
 
 	if (!skb)
