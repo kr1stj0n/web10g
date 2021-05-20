@@ -28,7 +28,7 @@ sudo apt-get install git fakeroot build-essential ncurses-dev xz-utils libssl-de
 - Start the building process
 
 ```bash
-sudo make -j32
+make -j32
 sudo make -j32 modules_install
 sudo make -j32 headers_install
 ```

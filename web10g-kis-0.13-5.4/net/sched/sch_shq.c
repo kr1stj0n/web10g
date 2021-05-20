@@ -19,7 +19,7 @@
 
 #define SHQ_SCALE_32 32
 #define SHQ_SCALE_16 16
-#define ONE (1U<<16)
+#define ONE_16 (1U<<16)
 
 /* parameters used */
 struct shq_params {
@@ -100,7 +100,7 @@ static void calc_probability(struct Qdisc *sch, psched_tdiff_t delta)
         cur_qlen += sch->qstats.backlog;               /* queue size in bytes */
         cur_qlen <<= SHQ_SCALE_16;
 
-        avg_qlen = (u64)(avg_qlen * (u64)(ONE - q->params.alpha)) +
+        avg_qlen = (u64)(avg_qlen * (u64)(ONE_16 - q->params.alpha)) +
                                        (u64)(cur_qlen * (u64)(q->params.alpha));
         avg_qlen >>= SHQ_SCALE_16;
         q->vars.avg_qlen = avg_qlen;
@@ -308,8 +308,11 @@ static struct sk_buff *shq_qdisc_dequeue(struct Qdisc *sch)
         u64 qdelay = 0ULL;
 	struct sk_buff *skb = qdisc_dequeue_head(sch);
 
-	if (!skb)
-		return NULL;
+	if (skb) {
+                qdisc_bstats_update(sch, skb);
+		qdisc_qstats_backlog_dec(sch, skb);
+		sch->q.qlen--;
+        }
 
         /* >> 10 is approx /1000 */
         qdelay = ((__force __u64)(ktime_get_real_ns() -
