@@ -61,11 +61,6 @@ static int red_enqueue(struct sk_buff *skb, struct Qdisc *sch,
 	struct Qdisc *child = q->qdisc;
 	int ret;
 
-        /* Timestamp the packet in order to calculate
-         * the queue stats in the dequeue process.
-         */
-        __net_timestamp(skb);
-
 	q->vars.qavg = red_calc_qavg(&q->parms,
 				     &q->vars,
 				     child->qstats.backlog);
@@ -98,6 +93,11 @@ static int red_enqueue(struct sk_buff *skb, struct Qdisc *sch,
 		q->stats.forced_mark++;
 		break;
 	}
+
+        /* Timestamp the packet in order to calculate
+         * the queue stats in the dequeue process.
+         */
+        __net_timestamp(skb);
 
 	ret = qdisc_enqueue(skb, child, to_free);
 	if (likely(ret == NET_XMIT_SUCCESS)) {

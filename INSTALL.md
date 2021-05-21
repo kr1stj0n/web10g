@@ -78,6 +78,8 @@ This programm is used by TEACUP to print the statistics to a file
 
 ```bash
 cd web10g-userland
+sudo apt install libtool
+sudo apt install libmnl-dev
 ./autogen.sh
 ./configure
 autoconf

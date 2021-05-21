@@ -24,7 +24,7 @@
 /* parameters used */
 struct shq_params {
 	u32 limit;		/* number of packets that can be enqueued */
-	psched_time_t interval;	/* user specified interval in pschedtime */
+	u32 interval;		/* user specified interval in jiffies */
 	u32 maxp;		/* maxp is the scaled maximum prob. [0,1] */
 	u32 alpha;		/* alpha is between 0 and 1 */
 	u32 bandwidth;		/* bandwidth interface bytes/sec */
@@ -36,7 +36,6 @@ struct shq_vars {
 	u64 avg_qlen;		/* average length of the queue */
 	u64 cur_qlen;		/* current length of the queue */
 	u32 avg_rate;		/* bytes per pschedtime tick, scaled */
-	psched_time_t r_time;
 };
 
 /* statistics gathering */
@@ -56,13 +55,14 @@ struct shq_sched_data {
 	struct shq_params params;
 	struct shq_vars vars;
 	struct shq_stats stats;
+	struct timer_list adapt_timer;
 	struct Qdisc *sch;
 };
 
 static void shq_params_init(struct shq_params *params)
 {
-	params->limit     = 1000U;		/* default of 1000 packets */
-	params->interval  = PSCHED_NS2TICKS(10 * NSEC_PER_MSEC);     /* 10 ms */
+	params->limit     = 1000U;		   /* default of 1000 packets */
+	params->interval  = usecs_to_jiffies(10 * USEC_PER_MSEC);
 	params->maxp      = 0U;
 	params->alpha     = 0U;
 	params->bandwidth = 0U;
@@ -74,7 +74,6 @@ static void shq_vars_init(struct shq_vars *vars)
 	vars->avg_qlen = 0ULL;
 	vars->cur_qlen = 0ULL;
 	vars->avg_rate = 0U;
-	vars->r_time   = psched_get_time();
 }
 
 static bool should_mark(struct Qdisc *sch)
@@ -90,12 +89,12 @@ static bool should_mark(struct Qdisc *sch)
 	return false;
 }
 
-static void calc_probability(struct Qdisc *sch, psched_tdiff_t delta)
+static void calc_probability(struct Qdisc *sch)
 {
 	struct shq_sched_data *q = qdisc_priv(sch);
 	u64 avg_qlen  = q->vars.avg_qlen;
 	u64 cur_qlen  = q->vars.cur_qlen;
-	u64 max_bytes = 0ULL;
+	u32 max_bytes = 0U;
 
 	cur_qlen += sch->qstats.backlog;               /* queue size in bytes */
 	cur_qlen <<= SHQ_SCALE_16;
@@ -106,18 +105,17 @@ static void calc_probability(struct Qdisc *sch, psched_tdiff_t delta)
 	q->vars.avg_qlen = avg_qlen;
 
 	/* Calculate the maximum number of incoming bytes during the interval */
-	max_bytes = (u64)((u64)(q->params.bandwidth / MSEC_PER_SEC) *
-			(u32)(PSCHED_TICKS2NS(delta)));
+	max_bytes = (q->params.bandwidth / MSEC_PER_SEC) *
+		(u32)(jiffies_to_usecs(q->params.interval) / USEC_PER_MSEC);
 	avg_qlen *= q->params.maxp;
-	do_div(avg_qlen, (u32)(max_bytes / NSEC_PER_MSEC));
+	do_div(avg_qlen, max_bytes);
 
 	/* The probability value should not exceed Max. probability */
 	u64 tmp_maxp = (u64)q->params.maxp; tmp_maxp <<= SHQ_SCALE_16;
 	if (avg_qlen > tmp_maxp)
 		avg_qlen = tmp_maxp;
 
-	/* Reset time and cur_qlen */
-	q->vars.r_time   = psched_get_time();
+	/* Reset cur_qlen */
 	q->vars.cur_qlen = 0ULL;
 
 	/* Update stats */
@@ -128,24 +126,14 @@ static int shq_qdisc_enqueue(struct sk_buff *skb, struct Qdisc *sch,
 			     struct sk_buff **to_free)
 {
 	struct shq_sched_data *q = qdisc_priv(sch);
-	psched_tdiff_t delta;
 	bool enqueue = false;
 
-	/* Timestamp the packet in order to calculate
-	 * the queue stats in the dequeue process.
-	 */
-	__net_timestamp(skb);
+	q->vars.cur_qlen += skb->len;
 
 	if (unlikely(qdisc_qlen(sch) >= sch->limit)) {
 		q->stats.overlimit++;
 		goto out;
 	}
-
-	q->vars.cur_qlen += skb->len;
-	delta = psched_get_time() - q->vars.r_time;
-
-	if (q->params.interval < delta)
-		calc_probability(sch, delta);
 
 	if (!should_mark(sch)) {
 		/* Don't mark the packet; enqueue since the queue is not full */
@@ -160,6 +148,11 @@ static int shq_qdisc_enqueue(struct sk_buff *skb, struct Qdisc *sch,
 
 	/* we can enqueue the packet */
 	if (enqueue) {
+		/* Timestamp the packet in order to calculate
+		 * * the queue stats in the dequeue process.
+		 * */
+		__net_timestamp(skb);
+
 		q->stats.packets_in++;
 		if (qdisc_qlen(sch) > q->stats.maxq)
 			q->stats.maxq = qdisc_qlen(sch);
@@ -209,8 +202,9 @@ static int shq_change(struct Qdisc *sch, struct nlattr *opt,
 	/* interval is in us */
 	if (tb[TCA_SHQ_INTERVAL]) {
 		us = nla_get_u32(tb[TCA_SHQ_INTERVAL]);
-		q->params.interval = PSCHED_NS2TICKS((u64)us * NSEC_PER_USEC);
+		q->params.interval = usecs_to_jiffies(us);
 	}
+
 	if (tb[TCA_SHQ_MAXP])
 		q->params.maxp = nla_get_u32(tb[TCA_SHQ_MAXP]);
 
@@ -238,6 +232,21 @@ static int shq_change(struct Qdisc *sch, struct nlattr *opt,
 	return 0;
 }
 
+static void shq_timer(struct timer_list *t)
+{
+	struct shq_sched_data *q = from_timer(q, t, adapt_timer);
+	struct Qdisc *sch = q->sch;
+	spinlock_t *root_lock = qdisc_lock(qdisc_root_sleeping(sch));
+
+	spin_lock(root_lock);
+	calc_probability(sch);
+
+	/* reset the timer to fire after 'interval'. interval is in jiffies. */
+	if (q->params.interval)
+		mod_timer(&q->adapt_timer, jiffies + q->params.interval);
+	spin_unlock(root_lock);
+}
+
 static int shq_init(struct Qdisc *sch, struct nlattr *opt,
 		struct netlink_ext_ack *extack)
 {
@@ -249,12 +258,15 @@ static int shq_init(struct Qdisc *sch, struct nlattr *opt,
 	sch->limit = q->params.limit;
 
 	q->sch = sch;
+	timer_setup(&q->adapt_timer, shq_timer, 0);
 
 	if (opt) {
 		err = shq_change(sch, opt, extack);
 		if (err)
 			return err;
 	}
+
+	mod_timer(&q->adapt_timer, jiffies + HZ / 2);
 
 	return 0;
 }
@@ -269,8 +281,7 @@ static int shq_dump(struct Qdisc *sch, struct sk_buff *skb)
 
 	if (nla_put_u32(skb, TCA_SHQ_LIMIT, sch->limit) ||
 			nla_put_u32(skb, TCA_SHQ_INTERVAL,
-				((u32)PSCHED_TICKS2NS(q->params.interval)) /
-				NSEC_PER_USEC) ||
+				jiffies_to_usecs(q->params.interval)) ||
 			nla_put_u32(skb, TCA_SHQ_MAXP, q->params.maxp) ||
 			nla_put_u32(skb, TCA_SHQ_ALPHA, q->params.alpha) ||
 			nla_put_u32(skb, TCA_SHQ_BANDWIDTH, q->params.bandwidth) ||
@@ -290,8 +301,8 @@ static int shq_dump_stats(struct Qdisc *sch, struct gnet_dump *d)
 	struct tc_shq_xstats st = {
 		.prob		= q->stats.prob,
 		.qdelay         = q->stats.qdelay,
-		/* unscale and return avg_rate in bytes per sec */
-		.avg_rate	= q->vars.avg_rate * PSCHED_TICKS_PER_SEC,
+		/* TODO: unscale and return avg_rate in bytes per sec */
+		.avg_rate	= q->vars.avg_rate,
 		.packets_in	= q->stats.packets_in,
 		.dropped	= q->stats.dropped,
 		.overlimit	= q->stats.overlimit,
@@ -308,11 +319,8 @@ static struct sk_buff *shq_qdisc_dequeue(struct Qdisc *sch)
 	u64 qdelay = 0ULL;
 	struct sk_buff *skb = qdisc_dequeue_head(sch);
 
-	if (skb) {
-		qdisc_bstats_update(sch, skb);
-		qdisc_qstats_backlog_dec(sch, skb);
-		sch->q.qlen--;
-	}
+	if (unlikely(!skb))
+		return NULL;
 
 	/* >> 10 is approx /1000 */
 	qdelay = ((__force __u64)(ktime_get_real_ns() -
@@ -334,7 +342,8 @@ static void shq_destroy(struct Qdisc *sch)
 {
 	struct shq_sched_data *q = qdisc_priv(sch);
 
-	q->params.interval = UINT_MAX;
+	q->params.interval = 0;
+	del_timer_sync(&q->adapt_timer);
 }
 
 static struct Qdisc_ops shq_qdisc_ops __read_mostly = {
