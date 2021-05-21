@@ -95,6 +95,7 @@ static void calc_probability(struct Qdisc *sch)
 	u64 avg_qlen  = q->vars.avg_qlen;
 	u64 cur_qlen  = q->vars.cur_qlen;
 	u32 max_bytes = 0U;
+	u64 tmp_maxp;
 
 	cur_qlen += sch->qstats.backlog;               /* queue size in bytes */
 	cur_qlen <<= SHQ_SCALE_16;
@@ -111,7 +112,7 @@ static void calc_probability(struct Qdisc *sch)
 	do_div(avg_qlen, max_bytes);
 
 	/* The probability value should not exceed Max. probability */
-	u64 tmp_maxp = (u64)q->params.maxp; tmp_maxp <<= SHQ_SCALE_16;
+	tmp_maxp = (u64)q->params.maxp; tmp_maxp <<= SHQ_SCALE_16;
 	if (avg_qlen > tmp_maxp)
 		avg_qlen = tmp_maxp;
 
