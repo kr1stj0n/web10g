@@ -321,7 +321,7 @@ static void tcp_lgc_update_rate(struct sock *sk, u32 ack, u32 acked)
 			 * as a temporary variable in prior operations.
 			 */
 			WRITE_ONCE(ca->rate, scaled_rate);
-			tcp_lgc_reset(tp, ca);
+			lgc_reset(tp, ca);
 		}
 	}
 	/* Use normal slow start */
@@ -361,8 +361,8 @@ static struct tcp_congestion_ops lgc __read_mostly = {
 	.ssthresh	= tcp_reno_ssthresh,
 	.undo_cwnd	= tcp_reno_undo_cwnd,
 	.cwnd_event	= tcp_lgc_cwnd_event,
-	.cong_avoid	= tcp_lgc_update_rate,,
-	.pkts_acked»    = tcp_lgc_pkts_acked,
+	.cong_avoid	= tcp_lgc_update_rate,
+	.pkts_acked	= tcp_lgc_pkts_acked,
 	.set_state	= tcp_lgc_state,
 	.get_info	= tcp_lgc_get_info,
 
