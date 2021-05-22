@@ -375,7 +375,7 @@ static struct tcp_congestion_ops lgc_reno __read_mostly = {
 	.ssthresh	= tcp_reno_ssthresh,
 	.cong_avoid	= tcp_reno_cong_avoid,
 	.undo_cwnd	= tcp_reno_undo_cwnd,
-	.get_info	= lgc_get_info,
+	.get_info	= tcp_lgc_get_info,
 	.owner		= THIS_MODULE,
 	.name		= "lgc-reno",
 };
