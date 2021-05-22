@@ -316,14 +316,13 @@ static void tcp_lgc_update_rate(struct sock *sk, u32 ack, u32 acked)
 			cwnd_B >>= 16;
 			do_div(cwnd_B, tp->mss_cache);
 			tp->snd_cwnd = max((u32)cwnd_B, 2U);
-
-			/* lgc_rate can be read from lgc_get_info() without
-			 * synchro, so we ask compiler to not use rate
-			 * as a temporary variable in prior operations.
-			 */
-			WRITE_ONCE(ca->rate, scaled_rate);
-			lgc_reset(tp, ca);
 		}
+		/* lgc_rate can be read from lgc_get_info() without
+		 * synchro, so we ask compiler to not use rate
+		 * as a temporary variable in prior operations.
+		 */
+		WRITE_ONCE(ca->rate, scaled_rate);
+		lgc_reset(tp, ca);
 	}
 	/* Use normal slow start */
 	else if (tcp_in_slow_start(tp))
