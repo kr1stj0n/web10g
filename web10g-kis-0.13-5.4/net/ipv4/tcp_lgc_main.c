@@ -321,7 +321,7 @@ static void tcp_lgc_update_rate(struct sock *sk, u32 ack, u32 acked)
 			else if (tp->snd_cwnd > tp->snd_cwnd_clamp)
 				tp->snd_cwnd = tp->snd_cwnd_clamp;
 
-			tp->snd_ssthresh = tcp_current_ssthresh(sk);
+			/* tp->snd_ssthresh = tcp_current_ssthresh(sk); */
 
 			/* lgc_rate can be read from lgc_get_info() without
 			 * * synchro, so we ask compiler to not use rate
@@ -332,8 +332,8 @@ static void tcp_lgc_update_rate(struct sock *sk, u32 ack, u32 acked)
 		lgc_reset(tp, ca);
 	}
 	/* Use normal slow start */
-	else if (tcp_in_slow_start(tp))
-		tcp_slow_start(tp, acked);
+	/* else if (tcp_in_slow_start(tp)) */
+	/* 	tcp_slow_start(tp, acked); */
 }
 
 static size_t tcp_lgc_get_info(struct sock *sk, u32 ext, int *attr,
