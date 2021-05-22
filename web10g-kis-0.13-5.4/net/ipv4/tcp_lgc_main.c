@@ -292,11 +292,9 @@ static void tcp_lgc_update_rate(struct sock *sk, u32 ack, u32 acked)
 			grXrateXgradient *= rate64;
 			s64 grXrateXgradient64 = (s64)grXrateXgradient;
 			grXrateXgradient64 *= (s64)gradient;
-			/* rate64 <<= 16; */
 			grXrateXgradient64 >>= 32;
-			grXrateXgradient64 += rate64;
-			/* u32 newRate = (u32)(grXrateXgradient64 >> LGC_SHIFT); */
-			u64 newRate64 = (u64)(grXrateXgradient64);
+
+			u64 newRate64 = (u64)(grXrateXgradient64) + rate64;
 			u32 newRate = (u32)newRate64;
 
 			if (newRate > (rate << 1))
@@ -332,8 +330,8 @@ static void tcp_lgc_update_rate(struct sock *sk, u32 ack, u32 acked)
 		lgc_reset(tp, ca);
 	}
 	/* Use normal slow start */
-	/* else if (tcp_in_slow_start(tp)) */
-	/* 	tcp_slow_start(tp, acked); */
+	else if (tcp_in_slow_start(tp))
+		tcp_slow_start(tp, acked);
 }
 
 static size_t tcp_lgc_get_info(struct sock *sk, u32 ext, int *attr,
