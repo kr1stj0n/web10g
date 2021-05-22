@@ -216,7 +216,7 @@ static void tcp_lgc_update_rate(struct sock *sk, u32 ack, u32 acked)
 {
 	struct tcp_sock *tp = tcp_sk(sk);
 	struct lgc *ca = inet_csk_ca(sk);
-        u32 init_rate = 0U, rate 0U;
+        u32 init_rate = 0U, rate = 0U;
         u32 rtt = 0U;
 
 	if (!ca->doing_lgc_now) {
