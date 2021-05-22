@@ -216,8 +216,8 @@ static void tcp_lgc_update_rate(struct sock *sk, u32 ack, u32 acked)
 {
 	struct tcp_sock *tp = tcp_sk(sk);
 	struct lgc *ca = inet_csk_ca(sk);
-        u32 init_rate, scaled_rate;
-        u32 rtt;
+        u32 init_rate = 0U, rate 0U;
+        u32 rtt = 0U;
 
 	if (!ca->doing_lgc_now) {
 		tcp_reno_cong_avoid(sk, ack, acked);
@@ -275,7 +275,7 @@ static void tcp_lgc_update_rate(struct sock *sk, u32 ack, u32 acked)
 			if (ca->fraction)
 				q = lgc_log_lut_lookup(ca->fraction) / lgc_logPhi_scaled;
 
-			u32 rate = ca->rate;
+			rate = ca->rate;
 			s32 gradient = (s32)((s32)ONE - (s32)(rate / lgc_max_rate) - (s32)q);
 
 			u32 gr = 1U << 30;
@@ -299,19 +299,18 @@ static void tcp_lgc_update_rate(struct sock *sk, u32 ack, u32 acked)
 			u64 newRate64 = (u64)(grXrateXgradient64);
 			u32 newRate = (u32)newRate64;
 
-			scaled_rate = (rate);
-			if (newRate > (scaled_rate << 1))
-				scaled_rate <<= 1;
+			if (newRate > (rate << 1))
+				rate <<= 1;
 			else
-				scaled_rate = newRate;
+				rate = newRate;
 
-			if (scaled_rate <= 0U)
-				scaled_rate = 2U << 16;
-			if (scaled_rate > (lgc_max_rate << LGC_SHIFT))
-				scaled_rate = (lgc_max_rate << LGC_SHIFT);
+			if (rate <= 0U)
+				rate = 2U << 16;
+			if (rate > (lgc_max_rate << LGC_SHIFT))
+				rate = (lgc_max_rate << LGC_SHIFT);
 
 			rtt = ca->baseRTT;
-			u64 cwnd_B = (u64)scaled_rate * (u64)rtt;
+			u64 cwnd_B = (u64)rate * (u64)rtt;
 			cwnd_B /= USEC_PER_MSEC;
 			cwnd_B >>= 16;
 			do_div(cwnd_B, tp->mss_cache);
@@ -323,12 +322,13 @@ static void tcp_lgc_update_rate(struct sock *sk, u32 ack, u32 acked)
 				tp->snd_cwnd = tp->snd_cwnd_clamp;
 
 			tp->snd_ssthresh = tcp_current_ssthresh(sk);
+
+			/* lgc_rate can be read from lgc_get_info() without
+			 * * synchro, so we ask compiler to not use rate
+			 * * as a temporary variable in prior operations.
+			 * */
+			WRITE_ONCE(ca->rate, rate);
 		}
-		/* lgc_rate can be read from lgc_get_info() without
-		 * synchro, so we ask compiler to not use rate
-		 * as a temporary variable in prior operations.
-		 */
-		WRITE_ONCE(ca->rate, scaled_rate);
 		lgc_reset(tp, ca);
 	}
 	/* Use normal slow start */
