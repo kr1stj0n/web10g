@@ -204,7 +204,6 @@ static void tcp_lgc_cwnd_event(struct sock *sk, enum tcp_ca_event event)
 	if (event == CA_EVENT_CWND_RESTART || event == CA_EVENT_TX_START) {
 		ca->baseRTT = 0x7fffffff;
 		lgc_enable(sk);
-	}
 }
 
 static inline u32 tcp_lgc_ssthresh(struct tcp_sock *tp)
@@ -212,11 +211,80 @@ static inline u32 tcp_lgc_ssthresh(struct tcp_sock *tp)
 	return  min(tp->snd_ssthresh, tp->snd_cwnd);
 }
 
-static void tcp_lgc_update_rate(struct sock *sk, u32 ack, u32 acked)
+static void lgc_update_rate(struct sock *sk)
 {
 	struct tcp_sock *tp = tcp_sk(sk);
 	struct lgc *ca = inet_csk_ca(sk);
-        u32 init_rate = 0U, rate = 0U;
+	u32 rate = ca->rate;
+
+	u32 delivered = tp->delivered - ca->old_delivered;
+	u32 delivered_ce = tp->delivered_ce - ca->old_delivered_ce;
+
+	delivered_ce <<= LGC_SHIFT;
+	delivered_ce /= max(1U, delivered);
+
+	u32 fraction = 0U;
+	if (delivered_ce >= THRESSH) {
+		fraction = (ONE - lgc_alpha_scaled) * ca->fraction +
+			(lgc_alpha_scaled * delivered_ce);
+		ca->fraction = fraction >> LGC_SHIFT;
+	} else {
+		fraction = (ONE - lgc_alpha_scaled) * ca->fraction;
+		ca->fraction = fraction >> LGC_SHIFT;
+	}
+	if (ca->fraction >= ONE)
+		ca->fraction = (99U * ONE) / 100U;
+
+	/* At this point we have a ca->fraction = [0,1) << LGC_SHIFT */
+
+	/* after the division, q is FP << 16 */
+	u32 q = 0U;
+	if (ca->fraction)
+		q = lgc_log_lut_lookup(ca->fraction) / lgc_logPhi_scaled;
+
+	s32 gradient = (s32)((s32)ONE - (s32)(rate / lgc_max_rate) - (s32)q);
+
+	u32 gr = 1U << 30;
+	if (delivered_ce == ONE)
+		gr /= lgc_coef;
+	else {
+		if (delivered_ce)
+			gr = lgc_exp_lut_lookup(delivered_ce); /* gr is 30-bit scaled */
+	}
+
+	u64 rate64 = (u64)rate;
+	u64 grXrateXgradient = (u64)gr * (u64)lgc_logP_scaled;
+	grXrateXgradient >>= 30;       /* 16-bit scaled at this point */
+	grXrateXgradient *= rate64;
+	s64 grXrateXgradient64 = (s64)grXrateXgradient;
+	grXrateXgradient64 *= (s64)gradient;
+	grXrateXgradient64 >>= 32;
+
+	u64 newRate64 = (u64)(grXrateXgradient64) + rate64;
+	u32 newRate = (u32)newRate64;
+
+	if (newRate > (rate << 1))
+		rate <<= 1;
+	else
+		rate = newRate;
+
+	if (rate <= 0U)
+		rate = 2U << 16;
+	if (rate > (lgc_max_rate << LGC_SHIFT))
+		rate = (lgc_max_rate << LGC_SHIFT);
+
+	/* lgc_rate can be read from lgc_get_info() without
+	 * synchro, so we ask compiler to not use rate
+	 * as a temporary variable in prior operations.
+	 */
+	WRITE_ONCE(ca->rate, rate);
+}
+
+static void tcp_lgc_cong_avoid(struct sock *sk, u32 ack, u32 acked)
+{
+	struct tcp_sock *tp = tcp_sk(sk);
+	struct lgc *ca = inet_csk_ca(sk);
+        u32 init_rate = 0U;
         u32 rtt = 0U;
 
 	if (!ca->doing_lgc_now) {
@@ -250,88 +318,31 @@ static void tcp_lgc_update_rate(struct sock *sk, u32 ack, u32 acked)
 				ca->rate_eval = 1;
 			}
 
-			u32 delivered = tp->delivered - ca->old_delivered;
-			u32 delivered_ce = tp->delivered_ce - ca->old_delivered_ce;
+			lgc_update_rate(sk);
 
-			delivered_ce <<= LGC_SHIFT;
-			delivered_ce /= max(1U, delivered);
-
-			u32 fraction = 0U;
-			if (delivered_ce >= THRESSH) {
-				fraction = (ONE - lgc_alpha_scaled) * ca->fraction +
-					(lgc_alpha_scaled * delivered_ce);
-				ca->fraction = fraction >> LGC_SHIFT;
+			/* In Slow Start */
+			if (tcp_in_slow_start(tp)) {
+				tcp_slow_start(tp, acked);
 			} else {
-				fraction = (ONE - lgc_alpha_scaled) * ca->fraction;
-				ca->fraction = fraction >> LGC_SHIFT;
+				rtt = ca->baseRTT;
+				u64 cwnd_B = (u64)ca->rate * (u64)rtt;
+				cwnd_B /= USEC_PER_MSEC;
+				cwnd_B >>= 16;
+				do_div(cwnd_B, tp->mss_cache);
+				tp->snd_cwnd = max((u32)cwnd_B, 2U);
+
+				if (tp->snd_cwnd < 2)
+					tp->snd_cwnd = 2;
+				else if (tp->snd_cwnd > tp->snd_cwnd_clamp)
+					tp->snd_cwnd = tp->snd_cwnd_clamp;
 			}
-			if (ca->fraction >= ONE)
-				ca->fraction = (99U * ONE) / 100U;
-
-			/* At this point we have a ca->fraction = [0,1) << LGC_SHIFT */
-
-			/* after the division, q is FP << 16 */
-			u32 q = 0U;
-			if (ca->fraction)
-				q = lgc_log_lut_lookup(ca->fraction) / lgc_logPhi_scaled;
-
-			rate = ca->rate;
-			s32 gradient = (s32)((s32)ONE - (s32)(rate / lgc_max_rate) - (s32)q);
-
-			u32 gr = 1U << 30;
-			if (delivered_ce == ONE)
-				gr /= lgc_coef;
-			else {
-				if (delivered_ce)
-					gr = lgc_exp_lut_lookup(delivered_ce); /* gr is 30-bit scaled */
-			}
-
-			u64 rate64 = (u64)rate;
-			u64 grXrateXgradient = (u64)gr * (u64)lgc_logP_scaled;
-			grXrateXgradient >>= 30;       /* 16-bit scaled at this point */
-			grXrateXgradient *= rate64;
-			s64 grXrateXgradient64 = (s64)grXrateXgradient;
-			grXrateXgradient64 *= (s64)gradient;
-			grXrateXgradient64 >>= 32;
-
-			u64 newRate64 = (u64)(grXrateXgradient64) + rate64;
-			u32 newRate = (u32)newRate64;
-
-			if (newRate > (rate << 1))
-				rate <<= 1;
-			else
-				rate = newRate;
-
-			if (rate <= 0U)
-				rate = 2U << 16;
-			if (rate > (lgc_max_rate << LGC_SHIFT))
-				rate = (lgc_max_rate << LGC_SHIFT);
-
-			rtt = ca->baseRTT;
-			u64 cwnd_B = (u64)rate * (u64)rtt;
-			cwnd_B /= USEC_PER_MSEC;
-			cwnd_B >>= 16;
-			do_div(cwnd_B, tp->mss_cache);
-			tp->snd_cwnd = max((u32)cwnd_B, 2U);
-
-			if (tp->snd_cwnd < 2)
-				tp->snd_cwnd = 2;
-			else if (tp->snd_cwnd > tp->snd_cwnd_clamp)
-				tp->snd_cwnd = tp->snd_cwnd_clamp;
-
-			/* tp->snd_ssthresh = tcp_current_ssthresh(sk); */
-
-			/* lgc_rate can be read from lgc_get_info() without
-			 * * synchro, so we ask compiler to not use rate
-			 * * as a temporary variable in prior operations.
-			 * */
-			WRITE_ONCE(ca->rate, rate);
 		}
 		lgc_reset(tp, ca);
 	}
 	/* Use normal slow start */
 	else if (tcp_in_slow_start(tp))
 		tcp_slow_start(tp, acked);
+
 }
 
 static size_t tcp_lgc_get_info(struct sock *sk, u32 ext, int *attr,
@@ -364,9 +375,9 @@ static size_t tcp_lgc_get_info(struct sock *sk, u32 ext, int *attr,
 static struct tcp_congestion_ops lgc __read_mostly = {
 	.init		= tcp_lgc_init,
 	.ssthresh	= tcp_reno_ssthresh,
+	.cong_avoid	= tcp_lgc_cong_avoid,
 	.undo_cwnd	= tcp_reno_undo_cwnd,
 	.cwnd_event	= tcp_lgc_cwnd_event,
-	.cong_avoid	= tcp_lgc_update_rate,
 	.pkts_acked	= tcp_lgc_pkts_acked,
 	.set_state	= tcp_lgc_state,
 	.get_info	= tcp_lgc_get_info,
