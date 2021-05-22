@@ -32,18 +32,18 @@
 #include "tcp_lgc.h"
 
 #define LGC_SHIFT	16
-#define ONE             (1U<<16)
-#define THRESSH         ((9U<<16)/10U)    /* ~0.9 */
+#define ONE		(1U<<16)
+#define THRESSH		((9U<<16)/10U)    /* ~0.9 */
 
 struct lgc {
 	u32 old_delivered;
 	u32 old_delivered_ce;
 	u32 next_seq;
-        u32 rate;                                 /* rate = snd_cwnd / minrtt */
-        u32 fraction;
-        u8  rate_eval:1;                /* indicates initial rate calculation */
-	u8  doing_lgc_now:1;	/* if true, do vegas for this RTT */
-	u16 cntRTT;		/* # of RTTs measured within last RTT */
+	u32 rate;                                 /* rate = snd_cwnd / minrtt */
+	u32 fraction;
+	u8  rate_eval:1;                /* indicates initial rate calculation */
+	u8  doing_lgc_now:1;		/* if true, do vegas for this RTT */
+	u16 cntRTT;			/* # of RTTs measured within last RTT */
 	u32 minRTT;	/* min of RTTs measured within last RTT (in usec) */
 	u32 baseRTT;	/* the min of all LGC RTT measurements seen (in usec) */
 };
@@ -135,8 +135,8 @@ static void tcp_lgc_init(struct sock *sk)
                                         || (tp->ecn_flags & TCP_ECN_OK)) {
 		struct lgc *ca = inet_csk_ca(sk);
 
-                ca->rate_eval = 0;
-                ca->fraction  = 0U;
+		ca->rate_eval = 0;
+		ca->fraction  = 0U;
 		ca->baseRTT = 0x7fffffff;
 		ca->doing_lgc_now = 1;
 		lgc_reset(tp, ca);
@@ -321,24 +321,19 @@ static void tcp_lgc_cong_avoid(struct sock *sk, u32 ack, u32 acked)
 				tcp_slow_start(tp, acked);
 			} else {
 				rtt = ca->baseRTT;
-				u64 cwnd_B = (u64)ca->rate * (u64)rtt;
-				cwnd_B /= USEC_PER_MSEC;
-				cwnd_B >>= 16;
-				do_div(cwnd_B, tp->mss_cache);
-				tp->snd_cwnd = max((u32)cwnd_B, 2U);
+				u64 target_cwnd = (u64)(ca->rate) * (u64)rtt;
+				target_cwnd /= USEC_PER_MSEC;
+				target_cwnd >>= 16;
+				do_div(target_cwnd, tp->mss_cache);
+				tp->snd_cwnd = max((u32)target_cwnd, 2U);
 
-				if (tp->snd_cwnd < 2)
-					tp->snd_cwnd = 2;
-				else if (tp->snd_cwnd > tp->snd_cwnd_clamp)
+				if (tp->snd_cwnd > tp->snd_cwnd_clamp)
 					tp->snd_cwnd = tp->snd_cwnd_clamp;
+				tp->snd_ssthresh = tcp_current_ssthresh(sk);
 			}
 		}
 		lgc_reset(tp, ca);
 	}
-	/* Use normal slow start */
-	else if (tcp_in_slow_start(tp))
-		tcp_slow_start(tp, acked);
-
 }
 
 static size_t tcp_lgc_get_info(struct sock *sk, u32 ext, int *attr,
