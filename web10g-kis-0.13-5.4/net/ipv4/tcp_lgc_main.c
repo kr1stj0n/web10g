@@ -204,11 +204,7 @@ static void tcp_lgc_cwnd_event(struct sock *sk, enum tcp_ca_event event)
 	if (event == CA_EVENT_CWND_RESTART || event == CA_EVENT_TX_START) {
 		ca->baseRTT = 0x7fffffff;
 		lgc_enable(sk);
-}
-
-static inline u32 tcp_lgc_ssthresh(struct tcp_sock *tp)
-{
-	return  min(tp->snd_ssthresh, tp->snd_cwnd);
+	}
 }
 
 static void lgc_update_rate(struct sock *sk)
