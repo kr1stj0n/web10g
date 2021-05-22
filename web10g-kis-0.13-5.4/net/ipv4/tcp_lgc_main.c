@@ -216,7 +216,7 @@ static void tcp_lgc_update_rate(struct sock *sk, u32 ack, u32 acked)
 {
 	struct tcp_sock *tp = tcp_sk(sk);
 	struct lgc *ca = inet_csk_ca(sk);
-        u32 init_rate;
+        u32 init_rate, scaled_rate;
         u32 rtt;
 
 	if (!ca->doing_lgc_now) {
@@ -299,7 +299,7 @@ static void tcp_lgc_update_rate(struct sock *sk, u32 ack, u32 acked)
 			u64 newRate64 = (u64)(grXrateXgradient64);
 			u32 newRate = (u32)newRate64;
 
-			u32 scaled_rate = (rate);
+			scaled_rate = (rate);
 			if (newRate > (scaled_rate << 1))
 				scaled_rate <<= 1;
 			else
@@ -316,6 +316,13 @@ static void tcp_lgc_update_rate(struct sock *sk, u32 ack, u32 acked)
 			cwnd_B >>= 16;
 			do_div(cwnd_B, tp->mss_cache);
 			tp->snd_cwnd = max((u32)cwnd_B, 2U);
+
+			if (tp->snd_cwnd < 2)
+				tp->snd_cwnd = 2;
+			else if (tp->snd_cwnd > tp->snd_cwnd_clamp)
+				tp->snd_cwnd = tp->snd_cwnd_clamp;
+
+			tp->snd_ssthresh = tcp_current_ssthresh(sk);
 		}
 		/* lgc_rate can be read from lgc_get_info() without
 		 * synchro, so we ask compiler to not use rate
