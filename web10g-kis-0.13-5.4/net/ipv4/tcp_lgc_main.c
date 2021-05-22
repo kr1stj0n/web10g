@@ -204,6 +204,7 @@ static void tcp_lgc_cwnd_event(struct sock *sk, enum tcp_ca_event event)
 	if (event == CA_EVENT_CWND_RESTART || event == CA_EVENT_TX_START) {
 		ca->baseRTT = 0x7fffffff;
 		lgc_enable(sk);
+	}
 }
 
 static inline u32 tcp_lgc_ssthresh(struct tcp_sock *tp)
@@ -365,7 +366,6 @@ static struct tcp_congestion_ops lgc __read_mostly = {
 	.pkts_acked	= tcp_lgc_pkts_acked,
 	.set_state	= tcp_lgc_state,
 	.get_info	= tcp_lgc_get_info,
-
 	.flags		= TCP_CONG_NEEDS_ECN,
 	.owner		= THIS_MODULE,
 	.name		= "lgc",
@@ -397,5 +397,5 @@ module_exit(lgc_unregister);
 MODULE_AUTHOR("Peyman Teymoori <peymant@ifi.uio.no>");
 MODULE_AUTHOR("Kr1stj0n C1k0 <kristjoc@ifi.uio.no>");
 MODULE_LICENSE("GPL");
-MODULE_VERSION("1.0");
+MODULE_VERSION("2.0");
 MODULE_DESCRIPTION("Logistic Growth Control(LGC) Congestion Control");
