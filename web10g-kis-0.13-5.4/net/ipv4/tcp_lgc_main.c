@@ -132,6 +132,7 @@ static void tcp_lgc_pkts_acked(struct sock *sk, const struct ack_sample *sample)
  */
 static void tcp_lgc_state(struct sock *sk, u8 new_state)
 {
+	struct tcp_sock *tp = tcp_sk(sk);
 	struct lgc *ca = inet_csk_ca(sk);
 
 	if (new_state == TCP_CA_Loss) {
@@ -140,6 +141,7 @@ static void tcp_lgc_state(struct sock *sk, u8 new_state)
 		tp->snd_ssthresh = max(tp->snd_cwnd >> 1U, 2U);
 	}
 }
+
 static void lgc_update_rate(struct sock *sk)
 {
 	struct tcp_sock *tp = tcp_sk(sk);
