@@ -1,10 +1,10 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 /* Logistic Growth Control (LGC) congestion control.
  *
- * https://uio.no
+ * https://www.mn.uio.no/ifi/english/research/projects/ocarina/
  *
- * This is an implementation of DCTCP over Reno, an enhancement to the
- * TCP congestion control algorithm designed for data centers. DCTCP
+ * This is an implementation of LGC over Reno, an enhancement to the
+ * TCP congestion control algorithm designed for data centers. LGC
  * leverages Explicit Congestion Notification (ECN) in the network to
  * provide multi-bit feedback to the end hosts. LGC's goal is to meet
  * the following three data center transport requirements:
@@ -42,10 +42,8 @@ struct lgc {
 	u32 rate;                                 /* rate = snd_cwnd / minrtt */
 	u32 fraction;
 	u8  rate_eval:1;                /* indicates initial rate calculation */
-	u8  doing_lgc_now:1;		/* if true, do vegas for this RTT */
 	u16 cntRTT;			/* # of RTTs measured within last RTT */
-	u32 minRTT;	/* min of RTTs measured within last RTT (in usec) */
-	u32 baseRTT;	/* the min of all LGC RTT measurements seen (in usec) */
+	u32 minRTT;	    /* min of RTTs measured within last RTT (in usec) */
 };
 
 /* Module parameters */
@@ -77,45 +75,6 @@ MODULE_PARM_DESC(lgc_max_rate, "lgc_max_rate");
 
 static struct tcp_congestion_ops lgc_reno;
 
-/* There are several situations when we must "re-start" LGC:
- *
- *  o when a connection is established
- *  o after an RTO
- *  o after fast recovery
- *  o when we send a packet and there is no outstanding
- *    unacknowledged data (restarting an idle connection)
- *
- * In these circumstances we cannot do a LGC calculation at the
- * end of the first RTT, because any calculation we do is using
- * stale info -- both the saved cwnd and congestion feedback are
- * stale.
- *
- * Instead we must wait until the completion of an RTT during
- * which we actually receive ACKs.
- */
-static void lgc_enable(struct sock *sk)
-{
-	const struct tcp_sock *tp = tcp_sk(sk);
-	struct lgc *ca = inet_csk_ca(sk);
-
-	/* Begin taking LGC samples next time we send something. */
-	ca->doing_lgc_now = 1;
-
-	/* Set the beginning of the next send window. */
-	ca->next_seq = tp->snd_nxt;
-
-	ca->cntRTT = 0;
-	ca->minRTT = 0x7fffffff;
-}
-
-/* Stop taking LGC samples for now. */
-static inline void lgc_disable(struct sock *sk)
-{
-	struct lgc *ca = inet_csk_ca(sk);
-
-	ca->doing_lgc_now = 0;
-}
-
 static void lgc_reset(const struct tcp_sock *tp, struct lgc *ca)
 {
 	ca->next_seq = tp->snd_nxt;
@@ -137,9 +96,8 @@ static void tcp_lgc_init(struct sock *sk)
 
 		ca->rate_eval = 0;
 		ca->fraction  = 0U;
-		ca->baseRTT = 0x7fffffff;
-		ca->doing_lgc_now = 1;
 		lgc_reset(tp, ca);
+
 		return;
 	}
 
@@ -150,63 +108,38 @@ static void tcp_lgc_init(struct sock *sk)
 	INET_ECN_dontxmit(sk);
 }
 
-/* Do RTT sampling needed for LGC.
- * Basically we:
- *   o min-filter RTT samples from within an RTT to get the current
- *     propagation delay + queuing delay (we are min-filtering to try to
- *     avoid the effects of delayed ACKs)
- *   o min-filter RTT samples from a much longer window (forever for now)
- *     to find the propagation delay (baseRTT)
- */
+/* Do RTT sampling needed for LGC. */
 static void tcp_lgc_pkts_acked(struct sock *sk, const struct ack_sample *sample)
 {
 	struct lgc *ca = inet_csk_ca(sk);
-	u32 vrtt;
+	u32 rtt;
 
 	if (sample->rtt_us < 0)
 		return;
 
-	/* Never allow zero rtt or baseRTT */
-	vrtt = sample->rtt_us + 1;
+	/* Never allow zero rtt */
+	rtt = sample->rtt_us + 1;
 
-	/* Filter to find propagation delay: */
-	if (vrtt < ca->baseRTT)
-		ca->baseRTT = vrtt;
+	/* Find min RTT */
+	if (rtt < ca->minRTT)
+		ca->minRTT = rtt;
 
-	/* Find the min RTT during the last RTT to find
-	 * the current prop. delay + queuing delay:
-	 */
-	ca->minRTT = min(ca->minRTT, vrtt);
 	ca->cntRTT++;
 }
 
-static void tcp_lgc_state(struct sock *sk, u8 ca_state)
-{
-	if (ca_state == TCP_CA_Open)
-		lgc_enable(sk);
-	else
-		lgc_disable(sk);
-}
-
 /*
- * If the connection is idle and we are restarting,
- * then we don't want to do any LGC calculations
- * until we get fresh RTT samples.  So when we
- * restart, we reset our LGC state to a clean
- * slate. After we get acks for this flight of
- * packets, _then_ we can make LGC calculations
- * again.
+ * In case of loss, reset to default values
  */
-static void tcp_lgc_cwnd_event(struct sock *sk, enum tcp_ca_event event)
+static void tcp_lgc_state(struct sock *sk, u8 new_state)
 {
 	struct lgc *ca = inet_csk_ca(sk);
 
-	if (event == CA_EVENT_CWND_RESTART || event == CA_EVENT_TX_START) {
-		ca->baseRTT = 0x7fffffff;
-		lgc_enable(sk);
+	if (new_state == TCP_CA_Loss) {
+		ca->minRTT  = 0x7fffffff;
+		ca->cntRTT = 0;
+		tp->snd_ssthresh = max(tp->snd_cwnd >> 1U, 2U);
 	}
 }
-
 static void lgc_update_rate(struct sock *sk)
 {
 	struct tcp_sock *tp = tcp_sk(sk);
@@ -308,7 +241,7 @@ static void tcp_lgc_cong_avoid(struct sock *sk, u32 ack, u32 acked)
 			if (!ca->rate_eval) {
 				/* Calculate the initial rate in bytes/msec */
 				init_rate = tp->snd_cwnd * tp->mss_cache * USEC_PER_MSEC;
-				rtt = ca->baseRTT;
+				rtt = ca->minRTT;
 				ca->rate = init_rate / rtt;
 				ca->rate <<= LGC_SHIFT;
 				ca->rate_eval = 1;
@@ -320,16 +253,15 @@ static void tcp_lgc_cong_avoid(struct sock *sk, u32 ack, u32 acked)
 			if (tcp_in_slow_start(tp)) {
 				tcp_slow_start(tp, acked);
 			} else {
-				rtt = ca->baseRTT;
+				rtt = ca->minRTT;
 				u64 target_cwnd = (u64)(ca->rate) * (u64)rtt;
 				target_cwnd /= USEC_PER_MSEC;
 				target_cwnd >>= 16;
 				do_div(target_cwnd, tp->mss_cache);
-				tp->snd_cwnd = max((u32)target_cwnd, 2U);
+				tp->snd_cwnd = max((u32)target_cwnd + 1, 2U);
 
 				if (tp->snd_cwnd > tp->snd_cwnd_clamp)
 					tp->snd_cwnd = tp->snd_cwnd_clamp;
-				tp->snd_ssthresh = tcp_current_ssthresh(sk);
 			}
 		}
 		lgc_reset(tp, ca);
@@ -367,11 +299,11 @@ static struct tcp_congestion_ops lgc __read_mostly = {
 	.init		= tcp_lgc_init,
 	.ssthresh	= tcp_reno_ssthresh,
 	.cong_avoid	= tcp_lgc_cong_avoid,
-	.undo_cwnd	= tcp_reno_undo_cwnd,
-	.cwnd_event	= tcp_lgc_cwnd_event,
-	.pkts_acked	= tcp_lgc_pkts_acked,
 	.set_state	= tcp_lgc_state,
+	.undo_cwnd	= tcp_reno_undo_cwnd,
+	.pkts_acked	= tcp_lgc_pkts_acked,
 	.get_info	= tcp_lgc_get_info,
+
 	.flags		= TCP_CONG_NEEDS_ECN,
 	.owner		= THIS_MODULE,
 	.name		= "lgc",
