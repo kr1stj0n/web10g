@@ -216,11 +216,6 @@ static void tcp_lgc_cong_avoid(struct sock *sk, u32 ack, u32 acked)
         u32 init_rate = 0U;
         u32 rtt = 0U;
 
-	if (!ca->doing_lgc_now) {
-		tcp_reno_cong_avoid(sk, ack, acked);
-		return;
-	}
-
 	/* Expired RTT */
 	if (after(ack, ca->next_seq)) {
 		/* We do the LGC calculations only if we got enough RTT
@@ -249,21 +244,17 @@ static void tcp_lgc_cong_avoid(struct sock *sk, u32 ack, u32 acked)
 
 			lgc_update_rate(sk);
 
-			/* In Slow Start */
-			if (tcp_in_slow_start(tp)) {
-				tcp_slow_start(tp, acked);
-			} else {
-				rtt = ca->minRTT;
-				u64 target_cwnd = (u64)(ca->rate) * (u64)rtt;
-				target_cwnd /= USEC_PER_MSEC;
-				target_cwnd >>= 16;
-				do_div(target_cwnd, tp->mss_cache);
-				tp->snd_cwnd = max((u32)target_cwnd + 1, 2U);
+			rtt = ca->minRTT;
+			u64 target_cwnd = (u64)(ca->rate) * (u64)rtt;
+			target_cwnd /= USEC_PER_MSEC;
+			target_cwnd >>= 16;
+			do_div(target_cwnd, tp->mss_cache);
+			tp->snd_cwnd = max((u32)target_cwnd + 1, 2U);
 
-				if (tp->snd_cwnd > tp->snd_cwnd_clamp)
-					tp->snd_cwnd = tp->snd_cwnd_clamp;
-			}
+			if (tp->snd_cwnd > tp->snd_cwnd_clamp)
+				tp->snd_cwnd = tp->snd_cwnd_clamp;
 		}
+
 		lgc_reset(tp, ca);
 	}
 }
