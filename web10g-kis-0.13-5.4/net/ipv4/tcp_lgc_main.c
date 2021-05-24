@@ -211,7 +211,7 @@ static void lgc_update_rate(struct sock *sk)
 	WRITE_ONCE(ca->rate, rate);
 }
 
-static void tcp_lgc_update_rate(struct sock *sk, u32 flags)
+static void tcp_lgc_cong_avoid(struct sock *sk, u32 ack, u32 acked)
 {
 	struct tcp_sock *tp = tcp_sk(sk);
 	struct lgc *ca = inet_csk_ca(sk);
@@ -219,7 +219,7 @@ static void tcp_lgc_update_rate(struct sock *sk, u32 flags)
         u32 rtt = 0U;
 
 	/* Expired RTT */
-	if (!before(tp->snd_una, ca->next_seq) && ca->cntRTT > 1) {
+	if (after(ack, ca->next_seq)) {
 		/* We do the LGC calculations only if we got enough RTT
 		 * samples that we can be reasonably sure that we got
 		 * at least one RTT sample that wasn't from a delayed ACK.
@@ -229,28 +229,36 @@ static void tcp_lgc_update_rate(struct sock *sk, u32 flags)
 		 * If  we have 3 samples, we should be OK.
 		 */
 
-		if (!ca->rate_eval) {
-			/* Calculate the initial rate in bytes/msec */
-			init_rate = tp->snd_cwnd * tp->mss_cache * USEC_PER_MSEC;
+		if (ca->cntRTT <= 2) {
+			/* We don't have enough RTT samples to do the LGC
+			 * calculation, so we'll behave like Reno.
+			 */
+			tcp_reno_cong_avoid(sk, ack, acked);
+			ca->next_seq = tp->snd_nxt;
+		} else {
+			if (!ca->rate_eval) {
+				/* Calculate the initial rate in bytes/msec */
+				init_rate = tp->snd_cwnd * tp->mss_cache * USEC_PER_MSEC;
+				rtt = ca->minRTT;
+				ca->rate = init_rate / rtt;
+				ca->rate <<= LGC_SHIFT;
+				ca->rate_eval = 1;
+			}
+
+			lgc_update_rate(sk);
+
 			rtt = ca->minRTT;
-			ca->rate = init_rate / rtt;
-			ca->rate <<= LGC_SHIFT;
-			ca->rate_eval = 1;
+			u64 target_cwnd = (u64)(ca->rate) * (u64)rtt;
+			target_cwnd /= USEC_PER_MSEC;
+			target_cwnd >>= 16;
+			do_div(target_cwnd, tp->mss_cache);
+			tp->snd_cwnd = max((u32)target_cwnd + 1, 2U);
+
+			if (tp->snd_cwnd > tp->snd_cwnd_clamp)
+				tp->snd_cwnd = tp->snd_cwnd_clamp;
+
+			lgc_reset(tp, ca);
 		}
-
-		lgc_update_rate(sk);
-
-		rtt = ca->minRTT;
-		u64 target_cwnd = (u64)(ca->rate) * (u64)rtt;
-		target_cwnd /= USEC_PER_MSEC;
-		target_cwnd >>= 16;
-		do_div(target_cwnd, tp->mss_cache);
-		tp->snd_cwnd = max((u32)target_cwnd + 1, 2U);
-
-		if (tp->snd_cwnd > tp->snd_cwnd_clamp)
-			tp->snd_cwnd = tp->snd_cwnd_clamp;
-
-		lgc_reset(tp, ca);
 	}
 }
 
@@ -283,9 +291,8 @@ static size_t tcp_lgc_get_info(struct sock *sk, u32 ext, int *attr,
 
 static struct tcp_congestion_ops lgc __read_mostly = {
 	.init		= tcp_lgc_init,
-	.in_ack_event   = tcp_lgc_update_rate,
 	.ssthresh	= tcp_reno_ssthresh,
-	.cong_avoid	= tcp_reno_cong_avoid,
+	.cong_avoid	= tcp_lgc_cong_avoid,
 	.set_state	= tcp_lgc_state,
 	.undo_cwnd	= tcp_reno_undo_cwnd,
 	.pkts_acked	= tcp_lgc_pkts_acked,
