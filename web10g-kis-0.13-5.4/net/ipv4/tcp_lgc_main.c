@@ -169,7 +169,7 @@ static void lgc_update_rate(struct sock *sk)
 	/* At this point we have a ca->fraction = [0,1) << LGC_SHIFT */
 
 	/* after the division, q is FP << 16 */
-	u32 q = 0U;
+	u32 q = 0;
 	if (ca->fraction)
 		q = lgc_log_lut_lookup(ca->fraction) / lgc_logPhi_scaled;
 
@@ -191,8 +191,9 @@ static void lgc_update_rate(struct sock *sk)
 	grXrateXgradient64 *= (s64)gradient;
 	grXrateXgradient64 >>= 32;
 
-	u64 newRate64 = (u64)(grXrateXgradient64) + rate64;
-	u32 newRate = (u32)newRate64;
+	s64 newRate_s64 = (s64)(grXrateXgradient64) + (s64)rate64;
+	u64 newRate_u64 = (u64)newRate_s64;
+	u32 newRate = (u32)newRate_u64;
 
 	if (newRate > (rate << 1))
 		rate <<= 1;
@@ -229,7 +230,7 @@ static void tcp_lgc_cong_avoid(struct sock *sk, u32 ack, u32 acked)
 		 * If  we have 3 samples, we should be OK.
 		 */
 
-		if (ca->cntRTT <= 2) {
+		if (ca->cntRTT <= 1) {
 			/* We don't have enough RTT samples to do the LGC
 			 * calculation, so we'll behave like Reno.
 			 */
