@@ -33,9 +33,13 @@ struct shq_params {
 
 /* variables used */
 struct shq_vars {
+	u32 backlog;		/* bytes on the virtualQ */
 	u64 avg_qlen;		/* average length of the queue */
 	u64 cur_qlen;		/* current length of the queue */
 	u32 avg_rate;		/* bytes per pschedtime tick, scaled */
+	u64 prior_prob;		/* prior probability */
+	u64 qR;			/* Cached random number */
+	int qcount;		/* Nr. of pkts since last random generation */
 };
 
 /* statistics gathering */
@@ -62,7 +66,7 @@ struct shq_sched_data {
 static void shq_params_init(struct shq_params *params)
 {
 	params->limit     = 1000U;		   /* default of 1000 packets */
-	params->interval  = usecs_to_jiffies(10 * USEC_PER_MSEC);
+	params->interval  = usecs_to_jiffies(10 * USEC_PER_MSEC);     /* 10ms */
 	params->maxp      = 0U;
 	params->alpha     = 0U;
 	params->bandwidth = 0U;
@@ -71,20 +75,49 @@ static void shq_params_init(struct shq_params *params)
 
 static void shq_vars_init(struct shq_vars *vars)
 {
-	vars->avg_qlen = 0ULL;
-	vars->cur_qlen = 0ULL;
-	vars->avg_rate = 0U;
+	u64 rand	 = 0ULL;
+
+	vars->backlog	 = 0U;
+	vars->avg_qlen   = 0ULL;
+	vars->cur_qlen   = 0ULL;
+	vars->avg_rate   = 0U;
+	vars->prior_prob = 0ULL;
+
+	/* Generate initial random number */
+	prandom_bytes(&rand, 4);
+	v->qR		 = rand;
+
+	vars->qcount	 = -1;
 }
 
-static bool should_mark(struct Qdisc *sch)
+static bool should_mark(const struct shq_stats *s, struct shq_vars *v)
 {
-	struct shq_sched_data *q = qdisc_priv(sch);
 	u64 rand = 0ULL;
-	/* Generate a random 4-byte number */
-	prandom_bytes(&rand, 4);
-	/* rand = (u64)(((u64) prandom_u32() * UINT_MAX) >> 32); */
-	if (rand < q->stats.prob)
-		return true;
+
+	if (s->prob >= v->prior_prob) {
+		/* Probability is not decreasing; Throw the dice! */
+		prandom_bytes(&rand, 4);
+		v->qR = rand;
+		v->qcount = -1;
+
+		if (v->qR < s->prob)
+			return true;
+		else
+			return false;
+	} else {
+		if (++v->qcount) {
+			if (v->qR < s->prob) {
+				v->qcount = 0;
+				prandom_bytes(&rand, 4);
+				v->qR = rand;
+				return true;
+			} else {
+				prandom_bytes(&rand, 4);
+				v->qR = rand;
+				return false;
+			}
+		}
+	}
 
 	return false;
 }
@@ -97,7 +130,7 @@ static void calc_probability(struct Qdisc *sch)
 	u32 max_bytes = 0U;
 	u64 tmp_maxp;
 
-	cur_qlen += sch->qstats.backlog;               /* queue size in bytes */
+	cur_qlen += q->vars.backlog;		       /* queue size in bytes */
 	cur_qlen <<= SHQ_SCALE_16;
 
 	avg_qlen = (u64)(avg_qlen * (u64)(ONE_16 - q->params.alpha)) +
@@ -120,6 +153,7 @@ static void calc_probability(struct Qdisc *sch)
 	q->vars.cur_qlen = 0ULL;
 
 	/* Update stats */
+	q->vars.prior_prob = q->stats.prob;
 	q->stats.prob = avg_qlen;
 }
 
@@ -136,7 +170,7 @@ static int shq_qdisc_enqueue(struct sk_buff *skb, struct Qdisc *sch,
 		goto out;
 	}
 
-	if (!should_mark(sch)) {
+	if (!should_mark(&q->stats, &q->vars)) {
 		/* Don't mark the packet; enqueue since the queue is not full */
 		enqueue = true;
 	} else {
@@ -158,6 +192,7 @@ static int shq_qdisc_enqueue(struct sk_buff *skb, struct Qdisc *sch,
 		if (qdisc_qlen(sch) > q->stats.maxq)
 			q->stats.maxq = qdisc_qlen(sch);
 
+		q->vars.backlog += qdisc_pkt_len(skb);
 		return qdisc_enqueue_tail(skb, sch);
 	}
 
@@ -225,6 +260,7 @@ static int shq_change(struct Qdisc *sch, struct nlattr *opt,
 
 		dropped += qdisc_pkt_len(skb);
 		qdisc_qstats_backlog_dec(sch, skb);
+		q->vars.backlog -= qdisc_pkt_len(skb);
 		rtnl_qdisc_drop(skb, sch);
 	}
 	qdisc_tree_reduce_backlog(sch, qlen - sch->q.qlen, dropped);
@@ -327,6 +363,7 @@ static struct sk_buff *shq_qdisc_dequeue(struct Qdisc *sch)
 	qdelay = ((__force __u64)(ktime_get_real_ns() -
 				ktime_to_ns(skb_get_ktime(skb)))) >> 10;
 	q->stats.qdelay = qdelay;
+	q->vars.backlog -= qdisc_pkt_len(skb);
 
 	return skb;
 }
