@@ -113,7 +113,7 @@ static void calc_probability(struct Qdisc *sch)
 	 *                max_bytes
 	 */
 
-	avg_qlen *= q->params.maxp
+	avg_qlen *= q->params.maxp;
 
 	/* Calculate the maximum number of incoming bytes during the interval */
 	max_bytes = (q->params.bandwidth / MSEC_PER_SEC) *
