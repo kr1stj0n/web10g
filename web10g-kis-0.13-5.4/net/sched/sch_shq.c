@@ -17,9 +17,8 @@
 #include <net/pkt_sched.h>
 #include <net/inet_ecn.h>
 
-#define SHQ_SCALE_32 32
-#define SHQ_SCALE_16 16
-#define ONE_16 (1U<<16)
+#define SHQ_SCALE 16
+#define ONE (1U<<16)
 
 /* parameters used */
 struct shq_params {
@@ -36,7 +35,6 @@ struct shq_vars {
 	u64 avg_qlen;		/* average length of the queue */
 	u64 cur_qlen;		/* current length of the queue */
 	u32 avg_rate;		/* bytes per pschedtime tick, scaled */
-	u32 backlog;		/* bytes on the virtualQ */
 };
 
 /* statistics gathering */
@@ -75,7 +73,6 @@ static void shq_vars_init(struct shq_vars *vars)
 	vars->avg_qlen   = 0ULL;
 	vars->cur_qlen   = 0ULL;
 	vars->avg_rate   = 0U;
-	vars->backlog	 = 0U;
 }
 
 static bool should_mark(const struct shq_stats *s)
@@ -99,17 +96,16 @@ static void calc_probability(struct Qdisc *sch)
 	u32 max_bytes = 0U;
 	u64 tmp_maxp;
 
-	cur_qlen += q->vars.backlog;		       /* queue size in bytes */
-	cur_qlen <<= SHQ_SCALE_16;
+	cur_qlen += sch->qstats.backlog;	       /* queue size in bytes */
+	cur_qlen <<= SHQ_SCALE;
 
-	avg_qlen = (u64)(avg_qlen * (u64)(ONE_16 - q->params.alpha)) +
+	avg_qlen = (u64)(avg_qlen * (u64)(ONE - q->params.alpha)) +
 		(u64)(cur_qlen * (u64)(q->params.alpha));
-	avg_qlen >>= SHQ_SCALE_16;
+	avg_qlen >>= SHQ_SCALE;
 	q->vars.avg_qlen = avg_qlen;
 
-
 	/*                avg_qlen
-	 * prob = maxp * -----------
+	 * prob = maxp * ----------
 	 *                max_bytes
 	 */
 
@@ -123,7 +119,7 @@ static void calc_probability(struct Qdisc *sch)
 	do_div(avg_qlen, max_bytes);
 
 	/* The probability value should not exceed Max. probability */
-	tmp_maxp = (u64)q->params.maxp; tmp_maxp <<= SHQ_SCALE_16;
+	tmp_maxp = (u64)q->params.maxp; tmp_maxp <<= SHQ_SCALE;
 	if (avg_qlen > tmp_maxp)
 		avg_qlen = tmp_maxp;
 
@@ -160,16 +156,14 @@ static int shq_qdisc_enqueue(struct sk_buff *skb, struct Qdisc *sch,
 
 	/* we can enqueue the packet */
 	if (enqueue) {
-		/* Timestamp the packet in order to calculate
-		 * * the queue stats in the dequeue process.
-		 * */
-		__net_timestamp(skb);
-
 		q->stats.packets_in++;
 		if (qdisc_qlen(sch) > q->stats.maxq)
 			q->stats.maxq = qdisc_qlen(sch);
 
-		q->vars.backlog += qdisc_pkt_len(skb);
+		/* Timestamp the packet in order to calculate
+		 * * the queuing delay in the dequeue process.
+		 * */
+		__net_timestamp(skb);
 		return qdisc_enqueue_tail(skb, sch);
 	}
 
@@ -237,7 +231,6 @@ static int shq_change(struct Qdisc *sch, struct nlattr *opt,
 
 		dropped += qdisc_pkt_len(skb);
 		qdisc_qstats_backlog_dec(sch, skb);
-		q->vars.backlog -= qdisc_pkt_len(skb);
 		rtnl_qdisc_drop(skb, sch);
 	}
 	qdisc_tree_reduce_backlog(sch, qlen - sch->q.qlen, dropped);
@@ -295,7 +288,7 @@ static int shq_dump(struct Qdisc *sch, struct sk_buff *skb)
 
 	if (nla_put_u32(skb, TCA_SHQ_LIMIT, sch->limit) ||
 			nla_put_u32(skb, TCA_SHQ_INTERVAL,
-				jiffies_to_usecs(q->params.interval)) ||
+				    jiffies_to_usecs(q->params.interval)) ||
 			nla_put_u32(skb, TCA_SHQ_MAXP, q->params.maxp) ||
 			nla_put_u32(skb, TCA_SHQ_ALPHA, q->params.alpha) ||
 			nla_put_u32(skb, TCA_SHQ_BANDWIDTH, q->params.bandwidth) ||
@@ -340,7 +333,6 @@ static struct sk_buff *shq_qdisc_dequeue(struct Qdisc *sch)
 	qdelay = ((__force __u64)(ktime_get_real_ns() -
 				ktime_to_ns(skb_get_ktime(skb)))) >> 10;
 	q->stats.qdelay = qdelay;
-	q->vars.backlog -= qdisc_pkt_len(skb);
 
 	return skb;
 }
