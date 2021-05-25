@@ -129,7 +129,7 @@ static int shq_qdisc_enqueue(struct sk_buff *skb, struct Qdisc *sch,
 	struct shq_sched_data *q = qdisc_priv(sch);
 	bool enqueue = false;
 
-	q->vars.cur_qlen += skb->len;
+	q->vars.cur_qlen += qdisc_pkt_len(skb);
 
 	if (unlikely(qdisc_qlen(sch) >= sch->limit)) {
 		q->stats.overlimit++;
