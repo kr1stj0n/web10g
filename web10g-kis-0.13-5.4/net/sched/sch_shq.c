@@ -33,13 +33,10 @@ struct shq_params {
 
 /* variables used */
 struct shq_vars {
-	u32 backlog;		/* bytes on the virtualQ */
 	u64 avg_qlen;		/* average length of the queue */
 	u64 cur_qlen;		/* current length of the queue */
 	u32 avg_rate;		/* bytes per pschedtime tick, scaled */
-	u64 prior_prob;		/* prior probability */
-	u64 qR;			/* Cached random number */
-	int qcount;		/* Nr. of pkts since last random generation */
+	u32 backlog;		/* bytes on the virtualQ */
 };
 
 /* statistics gathering */
@@ -75,49 +72,21 @@ static void shq_params_init(struct shq_params *params)
 
 static void shq_vars_init(struct shq_vars *vars)
 {
-	u64 rand	 = 0ULL;
-
-	vars->backlog	 = 0U;
 	vars->avg_qlen   = 0ULL;
 	vars->cur_qlen   = 0ULL;
 	vars->avg_rate   = 0U;
-	vars->prior_prob = 0ULL;
-
-	/* Generate initial random number */
-	prandom_bytes(&rand, 4);
-	vars->qR	 = rand;
-
-	vars->qcount	 = -1;
+	vars->backlog	 = 0U;
 }
 
-static bool should_mark(const struct shq_stats *s, struct shq_vars *v)
+static bool should_mark(const struct shq_stats *s)
 {
-	u64 rand = 0ULL;
+	u64 rnd = 0ULL;
 
-	if (s->prob >= v->prior_prob) {
-		/* Probability is not decreasing; Throw the dice! */
-		prandom_bytes(&rand, 4);
-		v->qR = rand;
-		v->qcount = -1;
+	/* Generate a 32-bit random number */
+	prandom_bytes(&rnd, 4);
 
-		if (v->qR < s->prob)
-			return true;
-		else
-			return false;
-	} else {
-		if (++v->qcount) {
-			if (v->qR < s->prob) {
-				v->qcount = 0;
-				prandom_bytes(&rand, 4);
-				v->qR = rand;
-				return true;
-			} else {
-				prandom_bytes(&rand, 4);
-				v->qR = rand;
-				return false;
-			}
-		}
-	}
+	if (rnd < s->prob)
+		return true;
 
 	return false;
 }
@@ -138,10 +107,19 @@ static void calc_probability(struct Qdisc *sch)
 	avg_qlen >>= SHQ_SCALE_16;
 	q->vars.avg_qlen = avg_qlen;
 
+
+	/*                avg_qlen
+	 * prob = maxp * -----------
+	 *                max_bytes
+	 */
+
+	avg_qlen *= q->params.maxp
+
 	/* Calculate the maximum number of incoming bytes during the interval */
 	max_bytes = (q->params.bandwidth / MSEC_PER_SEC) *
 		(u32)(jiffies_to_usecs(q->params.interval) / USEC_PER_MSEC);
-	avg_qlen *= q->params.maxp;
+
+	/* Calculate the probability */
 	do_div(avg_qlen, max_bytes);
 
 	/* The probability value should not exceed Max. probability */
@@ -153,7 +131,6 @@ static void calc_probability(struct Qdisc *sch)
 	q->vars.cur_qlen = 0ULL;
 
 	/* Update stats */
-	q->vars.prior_prob = q->stats.prob;
 	q->stats.prob = avg_qlen;
 }
 
@@ -170,7 +147,7 @@ static int shq_qdisc_enqueue(struct sk_buff *skb, struct Qdisc *sch,
 		goto out;
 	}
 
-	if (!should_mark(&q->stats, &q->vars)) {
+	if (!should_mark(&q->stats)) {
 		/* Don't mark the packet; enqueue since the queue is not full */
 		enqueue = true;
 	} else {
