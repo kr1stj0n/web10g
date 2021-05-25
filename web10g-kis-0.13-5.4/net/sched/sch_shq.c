@@ -85,7 +85,7 @@ static void shq_vars_init(struct shq_vars *vars)
 
 	/* Generate initial random number */
 	prandom_bytes(&rand, 4);
-	v->qR		 = rand;
+	vars->qR	 = rand;
 
 	vars->qcount	 = -1;
 }
