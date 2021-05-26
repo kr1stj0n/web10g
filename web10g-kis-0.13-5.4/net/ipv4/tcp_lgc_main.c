@@ -33,7 +33,8 @@
 
 #define LGC_SHIFT	16
 #define ONE		(1U<<16)
-#define THRESSH		((9U<<16)/10U)    /* ~0.9 */
+#define THRESSH		((9U<<16)/10U)    /* ~0.9  */
+#define FRAC_LIMIT	((99U<<16)/100U)  /* ~0.99 */
 
 struct lgc {
 	u32 old_delivered;
@@ -48,19 +49,19 @@ struct lgc {
 
 /* Module parameters */
 /* lgc_logPhi_scaled = log2(2.78)*pow(2, 11) */
-static unsigned int lgc_logPhi_scaled __read_mostly = 3020;
-module_param(lgc_logPhi_scaled, uint, 0644);
-MODULE_PARM_DESC(lgc_logPhi_scaled, "scaled log(phi)");
+static unsigned int lgc_logPhi_11 __read_mostly = 3020;
+module_param(lgc_logPhi_11, uint, 0644);
+MODULE_PARM_DESC(lgc_logPhi_11, "scaled log(phi)");
 
 /* lgc_alpha_scaled = alpha = 0.25*2^16 */
-static unsigned int lgc_alpha_scaled __read_mostly = 16384;
-module_param(lgc_alpha_scaled, uint, 0644);
-MODULE_PARM_DESC(lgc_alpha_scaled, "scaled alpha");
+static unsigned int lgc_alpha_16 __read_mostly = 16384;
+module_param(lgc_alpha_16, uint, 0644);
+MODULE_PARM_DESC(lgc_alpha_16, "scaled alpha");
 
 /* lgc_logP_scaled = log(1.4) * pow(2, 16) */
-static unsigned int lgc_logP_scaled __read_mostly = 22051;
-module_param(lgc_logP_scaled, uint, 0644);
-MODULE_PARM_DESC(lgc_logP_scaled, "scaled logP");
+static unsigned int lgc_logP_16 __read_mostly = 22051;
+module_param(lgc_logP_16, uint, 0644);
+MODULE_PARM_DESC(lgc_logP_16, "scaled logP");
 
 /* default coef. = 20 */
 static unsigned int lgc_coef __read_mostly = 20;
@@ -156,52 +157,46 @@ static void lgc_update_rate(struct sock *sk)
 
 	u32 fraction = 0U;
 	if (delivered_ce >= THRESSH) {
-		fraction = (ONE - lgc_alpha_scaled) * ca->fraction +
-			(lgc_alpha_scaled * delivered_ce);
+		fraction = ((ONE - lgc_alpha_16) * ca->fraction) +
+			(lgc_alpha_16 * delivered_ce);
 		ca->fraction = fraction >> LGC_SHIFT;
 	} else {
-		fraction = (ONE - lgc_alpha_scaled) * ca->fraction;
+		fraction = (ONE - lgc_alpha_16) * ca->fraction;
 		ca->fraction = fraction >> LGC_SHIFT;
 	}
 	if (ca->fraction >= ONE)
-		ca->fraction = (99U * ONE) / 100U;
+		ca->fraction = FRAC_LIMIT;
 
-	/* At this point we have a ca->fraction = [0,1) << LGC_SHIFT */
+	/* At this point, we have a ca->fraction = [0,1) << LGC_SHIFT */
 
 	/* after the division, q is FP << 16 */
 	u32 q = 0;
 	if (ca->fraction)
-		q = lgc_log_lut_lookup(ca->fraction) / lgc_logPhi_scaled;
+		q = lgc_log_lut_lookup(ca->fraction) / lgc_logPhi_11;
 
 	s32 gradient = (s32)((s32)ONE - (s32)(rate / lgc_max_rate) - (s32)q);
 
-	u32 gr = 1U << 30;
+	u32 gr = 1U<<30;
 	if (delivered_ce == ONE)
 		gr /= lgc_coef;
 	else {
 		if (delivered_ce)
-			gr = lgc_exp_lut_lookup(delivered_ce); /* gr is 30-bit scaled */
+			gr = lgc_exp_lut_lookup(delivered_ce); /* 30bit scaled */
 	}
 
-	u64 rate64 = (u64)rate;
-	u64 grXrateXgradient = (u64)gr * (u64)lgc_logP_scaled;
-	grXrateXgradient >>= 30;       /* 16-bit scaled at this point */
-	grXrateXgradient *= rate64;
-	s64 grXrateXgradient64 = (s64)grXrateXgradient;
-	grXrateXgradient64 *= (s64)gradient;
-	grXrateXgradient64 >>= 32;
+	s64 gr_rate_gradient = (s64)(gr * lgc_logP_16);
+	gr_rate_gradient >>= 30;	/* 16-bit scaled at this point */
+	gr_rate_gradient *= rate;
+	gr_rate_gradient *= gradient;
+	gr_rate_gradient >>= 32;	/* 16-bit scaled at this point */
 
-	s64 newRate_s64 = (s64)(grXrateXgradient64) + (s64)rate64;
-	u64 newRate_u64 = (u64)newRate_s64;
-	u32 newRate = (u32)newRate_u64;
+	u32 new_rate = (u32)(rate + gr_rate_gradient);
 
-	if (newRate > (rate << 1))
+	if (new_rate > (rate << 1))
 		rate <<= 1;
 	else
-		rate = newRate;
+		rate = new_rate;
 
-	if (rate <= 0U)
-		rate = 2U << 16;
 	if (rate > (lgc_max_rate << LGC_SHIFT))
 		rate = (lgc_max_rate << LGC_SHIFT);
 
@@ -217,7 +212,7 @@ static void tcp_lgc_cong_avoid(struct sock *sk, u32 ack, u32 acked)
 	struct tcp_sock *tp = tcp_sk(sk);
 	struct lgc *ca = inet_csk_ca(sk);
         u32 init_rate = 0U;
-        u32 rtt = 0U;
+        u32 rtt_us = 0U;
 
 	/* Expired RTT */
 	if (after(ack, ca->next_seq)) {
@@ -235,21 +230,20 @@ static void tcp_lgc_cong_avoid(struct sock *sk, u32 ack, u32 acked)
 			 * calculation, so we'll behave like Reno.
 			 */
 			tcp_reno_cong_avoid(sk, ack, acked);
-			ca->next_seq = tp->snd_nxt;
 		} else {
 			if (!ca->rate_eval) {
 				/* Calculate the initial rate in bytes/msec */
 				init_rate = tp->snd_cwnd * tp->mss_cache * USEC_PER_MSEC;
-				rtt = ca->minRTT;
-				ca->rate = init_rate / rtt;
+				rtt_us = ca->minRTT;
+				ca->rate = init_rate / rtt_us;
 				ca->rate <<= LGC_SHIFT;
 				ca->rate_eval = 1;
 			}
 
 			lgc_update_rate(sk);
 
-			rtt = ca->minRTT;
-			u64 target_cwnd = (u64)(ca->rate) * (u64)rtt;
+			rtt_us = ca->minRTT;
+			u64 target_cwnd = (u64)(ca->rate) * (u64)rtt_us;
 			target_cwnd /= USEC_PER_MSEC;
 			target_cwnd >>= 16;
 			do_div(target_cwnd, tp->mss_cache);
