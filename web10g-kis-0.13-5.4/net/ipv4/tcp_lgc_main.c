@@ -112,8 +112,8 @@ static void lgc_update_rate(struct sock *sk)
 	struct lgc *ca = inet_csk_ca(sk);
 	u32 rate = ca->rate;
 
-	u32 delivered = tp->delivered - ca->old_delivered;
 	u32 delivered_ce = tp->delivered_ce - ca->old_delivered_ce;
+	u32 delivered = tp->delivered - ca->old_delivered;
 
 	delivered_ce <<= LGC_SHIFT;
 	delivered_ce /= max(1U, delivered);
@@ -133,11 +133,11 @@ static void lgc_update_rate(struct sock *sk)
 	/* At this point, we have a ca->fraction = [0,1) << LGC_SHIFT */
 
 	/* after the division, q is FP << 16 */
-	u32 q = 0;
+	u32 q = 0U;
 	if (ca->fraction)
 		q = lgc_log_lut_lookup(ca->fraction) / lgc_logPhi_11;
 
-	s32 gradient = (s32)((s32)ONE - (s32)(rate / lgc_max_rate) - (s32)q);
+	s32 gradient = (s32)((s32)(ONE) - (s32)(rate / lgc_max_rate) - (s32)q);
 
 	u32 gr = 1U<<30;
 	if (delivered_ce == ONE)
@@ -147,7 +147,9 @@ static void lgc_update_rate(struct sock *sk)
 			gr = lgc_exp_lut_lookup(delivered_ce); /* 30bit scaled */
 	}
 
-	s64 gr_rate_gradient = (s64)(gr * lgc_logP_16);
+	s64 gr_rate_gradient = 1LL;
+	gr_rate_gradient *= gr;
+	gr_rate_gradient *= lgc_logP_16;
 	gr_rate_gradient >>= 30;	/* 16-bit scaled at this point */
 	gr_rate_gradient *= rate;
 	gr_rate_gradient *= gradient;
@@ -174,7 +176,6 @@ static void tcp_lgc_cong_avoid(struct sock *sk, u32 ack, u32 acked)
 {
 	struct tcp_sock *tp = tcp_sk(sk);
 	struct lgc *ca = inet_csk_ca(sk);
-        u32 init_rate = 0U;
         u32 rtt_us = 0U;
 
 	/* Expired RTT */
@@ -183,18 +184,18 @@ static void tcp_lgc_cong_avoid(struct sock *sk, u32 ack, u32 acked)
 
 		if (!ca->rate_eval) {
 			/* Calculate the initial rate in bytes/msec */
-			init_rate = tp->snd_cwnd * tp->mss_cache * USEC_PER_MSEC;
+			u32 init_rate = tp->snd_cwnd * tp->mss_cache * USEC_PER_MSEC;
 			ca->rate = init_rate / rtt_us;
-			ca->rate <<= LGC_SHIFT;
+			ca->rate <<= LGC_SHIFT;      /* scale rate to 16 bits */
 			ca->rate_eval = 1;
 		}
 
 		lgc_update_rate(sk);
 
 		u64 target_cwnd = (u64)(ca->rate) * (u64)rtt_us;
-		target_cwnd /= USEC_PER_MSEC;
-		target_cwnd >>= 16;
-		do_div(target_cwnd, tp->mss_cache);
+		target_cwnd >>= LGC_SHIFT;
+		do_div(target_cwnd, tp->mss_cache * USEC_PER_MSEC);
+
 		tp->snd_cwnd = max((u32)target_cwnd + 1, 2U);
 
 		if (tp->snd_cwnd > tp->snd_cwnd_clamp)
