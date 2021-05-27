@@ -43,22 +43,20 @@ struct lgc {
 	u32 rate;                                 /* rate = snd_cwnd / minrtt */
 	u32 fraction;
 	u8  rate_eval:1;                /* indicates initial rate calculation */
-	u16 cntRTT;			/* # of RTTs measured within last RTT */
-	u32 minRTT;	    /* min of RTTs measured within last RTT (in usec) */
 };
 
 /* Module parameters */
-/* lgc_logPhi_scaled = log2(2.78)*pow(2, 11) */
+/* lgc_logPhi_11 = log2(2.78)*pow(2, 11) */
 static unsigned int lgc_logPhi_11 __read_mostly = 3020;
 module_param(lgc_logPhi_11, uint, 0644);
 MODULE_PARM_DESC(lgc_logPhi_11, "scaled log(phi)");
 
-/* lgc_alpha_scaled = alpha = 0.25*2^16 */
+/* lgc_alpha_16 = alpha << 16 = 0.25*2^16 */
 static unsigned int lgc_alpha_16 __read_mostly = 16384;
 module_param(lgc_alpha_16, uint, 0644);
 MODULE_PARM_DESC(lgc_alpha_16, "scaled alpha");
 
-/* lgc_logP_scaled = log(1.4) * pow(2, 16) */
+/* lgc_logP_16 = loge(1.4) * pow(2, 16) */
 static unsigned int lgc_logP_16 __read_mostly = 22051;
 module_param(lgc_logP_16, uint, 0644);
 MODULE_PARM_DESC(lgc_logP_16, "scaled logP");
@@ -182,7 +180,7 @@ static void tcp_lgc_cong_avoid(struct sock *sk, u32 ack, u32 acked)
 	if (after(ack, ca->next_seq)) {
 		rtt_us = tp->srtt_us >> 3;
 
-		if (!ca->rate_eval) {
+		if (unlikely(!ca->rate_eval)) {
 			/* Calculate the initial rate in bytes/msec */
 			u32 init_rate = tp->snd_cwnd * tp->mss_cache * USEC_PER_MSEC;
 			ca->rate = init_rate / rtt_us;
@@ -238,7 +236,6 @@ static struct tcp_congestion_ops lgc __read_mostly = {
 	.cong_avoid	= tcp_lgc_cong_avoid,
 	.undo_cwnd	= tcp_reno_undo_cwnd,
 	.get_info	= tcp_lgc_get_info,
-
 	.flags		= TCP_CONG_NEEDS_ECN,
 	.owner		= THIS_MODULE,
 	.name		= "lgc",
