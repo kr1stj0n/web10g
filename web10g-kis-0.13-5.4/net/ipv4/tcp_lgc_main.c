@@ -46,27 +46,27 @@ struct lgc {
 };
 
 /* Module parameters */
-/* lgc_logPhi_11 = log2(2.78)*pow(2, 11) */
+/* lgc_logPhi_11 = log2(2.78) * 2^11 */
 static unsigned int lgc_logPhi_11 __read_mostly = 3020;
 module_param(lgc_logPhi_11, uint, 0644);
 MODULE_PARM_DESC(lgc_logPhi_11, "scaled log(phi)");
 
-/* lgc_alpha_16 = alpha << 16 = 0.25*2^16 */
+/* lgc_alpha_16 = alpha << 16 = 0.25 * 2^16 */
 static unsigned int lgc_alpha_16 __read_mostly = 16384;
 module_param(lgc_alpha_16, uint, 0644);
 MODULE_PARM_DESC(lgc_alpha_16, "scaled alpha");
 
-/* lgc_logP_16 = loge(1.4) * pow(2, 16) */
+/* lgc_logP_16 = loge(1.4) * 2^16 */
 static unsigned int lgc_logP_16 __read_mostly = 22051;
 module_param(lgc_logP_16, uint, 0644);
 MODULE_PARM_DESC(lgc_logP_16, "scaled logP");
 
-/* default coef. = 20 */
+/* lgc_coef = 20 */
 static unsigned int lgc_coef __read_mostly = 20;
 module_param(lgc_coef, uint, 0644);
 MODULE_PARM_DESC(lgc_coef, "lgc_coef");
 
-/* default lgc_max_rate = 1250 bpms or 10Mbps */
+/* lgc_max_rate = 1250 bytes/ms | 10Mbps */
 static unsigned int lgc_max_rate __read_mostly = 1250;
 module_param(lgc_max_rate, uint, 0644);
 MODULE_PARM_DESC(lgc_max_rate, "lgc_max_rate");
@@ -125,7 +125,7 @@ static void lgc_update_rate(struct sock *sk)
 		fraction = (ONE - lgc_alpha_16) * ca->fraction;
 		ca->fraction = fraction >> LGC_SHIFT;
 	}
-	if (ca->fraction >= ONE)
+	if (ca->fraction == ONE)
 		ca->fraction = FRAC_LIMIT;
 
 	/* At this point, we have a ca->fraction = [0,1) << LGC_SHIFT */
@@ -151,17 +151,20 @@ static void lgc_update_rate(struct sock *sk)
 	gr_rate_gradient >>= 30;	/* 16-bit scaled at this point */
 	gr_rate_gradient *= rate;
 	gr_rate_gradient *= gradient;
-	gr_rate_gradient >>= 32;	/* 16-bit scaled at this point */
+	gr_rate_gradient >>= 32;	/* back to 16-bit scaled */
 
 	u32 new_rate = (u32)(rate + gr_rate_gradient);
 
+	/* new rate shouldn't increase more than twice */
 	if (new_rate > (rate << 1))
 		rate <<= 1;
 	else
 		rate = new_rate;
 
-	if (rate > (lgc_max_rate << LGC_SHIFT))
-		rate = (lgc_max_rate << LGC_SHIFT);
+	/* Check if the new rate exceeds the link capacity */
+	u32 max_rate_scaled = lgc_max_rate << LGC_SHIFT;
+	if (rate > max_rate_scaled)
+		rate = max_rate_scaled;
 
 	/* lgc_rate can be read from lgc_get_info() without
 	 * synchro, so we ask compiler to not use rate
@@ -170,14 +173,14 @@ static void lgc_update_rate(struct sock *sk)
 	WRITE_ONCE(ca->rate, rate);
 }
 
-static void tcp_lgc_cong_avoid(struct sock *sk, u32 ack, u32 acked)
+static void tcp_lgc_update_rate(struct sock *sk, u32 flags)
 {
 	struct tcp_sock *tp = tcp_sk(sk);
 	struct lgc *ca = inet_csk_ca(sk);
         u32 rtt_us = 0U;
 
 	/* Expired RTT */
-	if (after(ack, ca->next_seq)) {
+	if (!before(tp->snd_una, ca->next_seq)) {
 		rtt_us = tp->srtt_us >> 3;
 
 		if (unlikely(!ca->rate_eval)) {
@@ -201,6 +204,14 @@ static void tcp_lgc_cong_avoid(struct sock *sk, u32 ack, u32 acked)
 
 		lgc_reset(tp, ca);
 	}
+}
+
+static void tcp_lgc_cong_avoid(struct sock *sk, u32 ack, u32 acked)
+{
+	struct tcp_sock *tp = tcp_sk(sk);
+	/* Basically, do nothing */
+
+	return;
 }
 
 static size_t tcp_lgc_get_info(struct sock *sk, u32 ext, int *attr,
@@ -233,6 +244,7 @@ static size_t tcp_lgc_get_info(struct sock *sk, u32 ext, int *attr,
 static struct tcp_congestion_ops lgc __read_mostly = {
 	.init		= tcp_lgc_init,
 	.ssthresh	= tcp_reno_ssthresh,
+	.in_ack_event	= tcp_lgc_update_rate,
 	.cong_avoid	= tcp_lgc_cong_avoid,
 	.undo_cwnd	= tcp_reno_undo_cwnd,
 	.get_info	= tcp_lgc_get_info,
