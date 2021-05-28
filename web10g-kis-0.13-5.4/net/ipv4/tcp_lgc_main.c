@@ -193,7 +193,9 @@ static void tcp_lgc_update_rate(struct sock *sk, u32 flags)
 
 		lgc_update_rate(sk);
 
-		u64 target_cwnd = (u64)(ca->rate) * (u64)rtt_us;
+		u64 target_cwnd = 1ULL;
+		target_cwnd *= ca->rate;
+		target_cwnd *= rtt_us;
 		target_cwnd >>= LGC_SHIFT;
 		do_div(target_cwnd, tp->mss_cache * USEC_PER_MSEC);
 
@@ -204,14 +206,6 @@ static void tcp_lgc_update_rate(struct sock *sk, u32 flags)
 
 		lgc_reset(tp, ca);
 	}
-}
-
-static void tcp_lgc_cong_avoid(struct sock *sk, u32 ack, u32 acked)
-{
-	struct tcp_sock *tp = tcp_sk(sk);
-	/* Basically, do nothing */
-
-	return;
 }
 
 static size_t tcp_lgc_get_info(struct sock *sk, u32 ext, int *attr,
@@ -245,7 +239,7 @@ static struct tcp_congestion_ops lgc __read_mostly = {
 	.init		= tcp_lgc_init,
 	.ssthresh	= tcp_reno_ssthresh,
 	.in_ack_event	= tcp_lgc_update_rate,
-	.cong_avoid	= tcp_lgc_cong_avoid,
+	.cong_avoid	= tcp_reno_cong_avoid,
 	.undo_cwnd	= tcp_reno_undo_cwnd,
 	.get_info	= tcp_lgc_get_info,
 	.flags		= TCP_CONG_NEEDS_ECN,
