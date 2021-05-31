@@ -189,7 +189,7 @@ static void tcp_lgc_update_rate(struct sock *sk, u32 flags)
 			/* Calculate the initial rate in bytes/msec */
 			u32 init_rate = tp->snd_cwnd * tp->mss_cache * USEC_PER_MSEC;
 			ca->rate = init_rate / ca->minRTT;
-			ca->rate = <<= LGC_SHIFT;
+			ca->rate <<= LGC_SHIFT;
 			ca->rate_eval = 1;
 		}
 
