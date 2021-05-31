@@ -224,7 +224,7 @@ static size_t tcp_lgc_get_info(struct sock *sk, u32 ext, int *attr,
 		memset(&info->lgc, 0, sizeof(info->lgc));
 		if (inet_csk(sk)->icsk_ca_ops != &lgc_reno) {
 			info->lgc.lgc_enabled = 1;
-			info->lgc.lgc_rate = (u32)(ca->rate >> LGC_SHIFT);
+			info->lgc.lgc_rate = ca->rate >> LGC_SHIFT;
 			info->lgc.lgc_ab_ecn = tp->mss_cache *
 				      (tp->delivered_ce - ca->old_delivered_ce);
 			info->lgc.lgc_ab_tot = tp->mss_cache *
