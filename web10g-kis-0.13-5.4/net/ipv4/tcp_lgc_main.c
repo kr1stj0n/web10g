@@ -177,14 +177,14 @@ static void lgc_update_rate(struct sock *sk)
 	WRITE_ONCE(ca->rate, rate);
 }
 
-static void tcp_lgc_update_rate(struct sock *sk, u32 flags)
+static void tcp_lgc_update_rate(struct sock *sk, u32 ack, u32 acked)
 {
 	struct tcp_sock *tp = tcp_sk(sk);
 	struct lgc *ca = inet_csk_ca(sk);
         ca->minRTT = min_not_zero(tcp_min_rtt(tp), ca->minRTT);
 
 	/* Expired RTT */
-	if (!before(tp->snd_una, ca->next_seq)) {
+	if (after(ack, ca->next_seq)) {
 		if (unlikely(!ca->rate_eval)) {
 			/* Calculate the initial rate in bytes/msec */
 			u32 init_rate = tp->snd_cwnd * tp->mss_cache * USEC_PER_MSEC;
@@ -240,8 +240,7 @@ static size_t tcp_lgc_get_info(struct sock *sk, u32 ext, int *attr,
 static struct tcp_congestion_ops lgc __read_mostly = {
 	.init		= tcp_lgc_init,
 	.ssthresh	= tcp_reno_ssthresh,
-	.in_ack_event	= tcp_lgc_update_rate,
-	.cong_avoid	= tcp_reno_cong_avoid,
+	.cong_avoid	= tcp_lgc_update_rate,
 	.undo_cwnd	= tcp_reno_undo_cwnd,
 	.get_info	= tcp_lgc_get_info,
 	.flags		= TCP_CONG_NEEDS_ECN,
