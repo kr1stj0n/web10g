@@ -31,43 +31,44 @@
 #include <linux/inet_diag.h>
 #include "tcp_lgc.h"
 
-#define LGC_SHIFT	16
-#define ONE		(1U<<16)
-#define THRESSH		((9U<<16)/10U)    /* ~0.9  */
-#define FRAC_LIMIT	((99U<<16)/100U)  /* ~0.99 */
+#define LGC_SHIFT	(16U)
+#define ONE		(1U<<16U)
+#define THRESSH		((9U<<16U)/10U)    /* ~0.9  */
+#define FRAC_LIMIT	((99U<<16U)/100U)  /* ~0.99 */
 
 struct lgc {
 	u32 old_delivered;
 	u32 old_delivered_ce;
 	u32 next_seq;
-	u32 rate;                                 /* rate = snd_cwnd / minrtt */
+	u64 rate;
+	u32 minRTT;
 	u32 fraction;
-	u8  rate_eval:1;                /* indicates initial rate calculation */
+	u8  rate_eval:1;
 };
 
 /* Module parameters */
 /* lgc_logPhi_11 = log2(2.78) * 2^11 */
-static unsigned int lgc_logPhi_11 __read_mostly = 3020;
+static unsigned int lgc_logPhi_11 __read_mostly = 3020u;
 module_param(lgc_logPhi_11, uint, 0644);
 MODULE_PARM_DESC(lgc_logPhi_11, "scaled log(phi)");
 
 /* lgc_alpha_16 = alpha << 16 = 0.25 * 2^16 */
-static unsigned int lgc_alpha_16 __read_mostly = 16384;
+static unsigned int lgc_alpha_16 __read_mostly = 16384u;
 module_param(lgc_alpha_16, uint, 0644);
 MODULE_PARM_DESC(lgc_alpha_16, "scaled alpha");
 
 /* lgc_logP_16 = loge(1.4) * 2^16 */
-static unsigned int lgc_logP_16 __read_mostly = 22051;
+static unsigned int lgc_logP_16 __read_mostly = 22051u;
 module_param(lgc_logP_16, uint, 0644);
 MODULE_PARM_DESC(lgc_logP_16, "scaled logP");
 
 /* lgc_coef = 20 */
-static unsigned int lgc_coef __read_mostly = 20;
+static unsigned int lgc_coef __read_mostly = 20u;
 module_param(lgc_coef, uint, 0644);
 MODULE_PARM_DESC(lgc_coef, "lgc_coef");
 
-/* lgc_max_rate = 1250 bytes/ms | 10Mbps */
-static unsigned int lgc_max_rate __read_mostly = 1250;
+/* lgc_max_rate = 1250000 bytes/s | 10Mbps */
+static unsigned int lgc_max_rate __read_mostly = 1250000u;
 module_param(lgc_max_rate, uint, 0644);
 MODULE_PARM_DESC(lgc_max_rate, "lgc_max_rate");
 /* End of Module parameters */
@@ -90,7 +91,8 @@ static void tcp_lgc_init(struct sock *sk)
                                         || (tp->ecn_flags & TCP_ECN_OK)) {
 		struct lgc *ca = inet_csk_ca(sk);
 
-		ca->rate_eval = 0;
+		ca->rate_eval = 0U;
+		ca->minRTT    = 1U<<20U; /* reference RTT ~1s */
 		ca->fraction  = 0U;
 		lgc_reset(tp, ca);
 
@@ -108,7 +110,7 @@ static void lgc_update_rate(struct sock *sk)
 {
 	struct tcp_sock *tp = tcp_sk(sk);
 	struct lgc *ca = inet_csk_ca(sk);
-	u32 rate = ca->rate;
+	u64 rate = ca->rate;
 
 	u32 delivered_ce = tp->delivered_ce - ca->old_delivered_ce;
 	u32 delivered = tp->delivered - ca->old_delivered;
@@ -135,7 +137,12 @@ static void lgc_update_rate(struct sock *sk)
 	if (ca->fraction)
 		q = lgc_log_lut_lookup(ca->fraction) / lgc_logPhi_11;
 
-	s32 gradient = (s32)((s32)(ONE) - (s32)(rate / lgc_max_rate) - (s32)q);
+	/* Calculate link ulitlization */
+	u64 link_util = rate;
+	do_div(link_util, lgc_max_rate);
+
+	/* Calculate gradient */
+	s32 gradient = (s32)((s32)(ONE) - (s32)(link_util) - (s32)q);
 
 	u32 gr = 1U<<30;
 	if (delivered_ce == ONE)
@@ -153,7 +160,7 @@ static void lgc_update_rate(struct sock *sk)
 	gr_rate_gradient *= gradient;
 	gr_rate_gradient >>= 32;	/* back to 16-bit scaled */
 
-	u32 new_rate = (u32)(rate + gr_rate_gradient);
+	u64 new_rate = (u64)(rate + gr_rate_gradient);
 
 	/* new rate shouldn't increase more than twice */
 	if (new_rate > (rate << 1))
@@ -162,7 +169,7 @@ static void lgc_update_rate(struct sock *sk)
 		rate = new_rate;
 
 	/* Check if the new rate exceeds the link capacity */
-	u32 max_rate_scaled = lgc_max_rate << LGC_SHIFT;
+	u64 max_rate_scaled = (u64)(lgc_max_rate << LGC_SHIFT);
 	if (rate > max_rate_scaled)
 		rate = max_rate_scaled;
 
@@ -177,17 +184,16 @@ static void tcp_lgc_update_rate(struct sock *sk, u32 flags)
 {
 	struct tcp_sock *tp = tcp_sk(sk);
 	struct lgc *ca = inet_csk_ca(sk);
-        u32 rtt_us = 0U;
+        ca->minRTT = min_not_zero(tcp_min_rtt(tp), ca->minRTT);
 
 	/* Expired RTT */
 	if (!before(tp->snd_una, ca->next_seq)) {
-		rtt_us = tp->srtt_us >> 3;
-
 		if (unlikely(!ca->rate_eval)) {
-			/* Calculate the initial rate in bytes/msec */
-			u32 init_rate = tp->snd_cwnd * tp->mss_cache * USEC_PER_MSEC;
-			ca->rate = init_rate / rtt_us;
-			ca->rate <<= LGC_SHIFT;      /* scale rate to 16 bits */
+			/* Calculate the initial rate in bytes/sec */
+			u64 init_rate = (u64)(tp->snd_cwnd * tp->mss_cache);
+			init_rate *= USEC_PER_MSEC;
+			do_div(init_rate, ca->minRTT);
+			ca->rate = init_rate << LGC_SHIFT;
 			ca->rate_eval = 1;
 		}
 
@@ -195,7 +201,7 @@ static void tcp_lgc_update_rate(struct sock *sk, u32 flags)
 
 		u64 target_cwnd = 1ULL;
 		target_cwnd *= ca->rate;
-		target_cwnd *= rtt_us;
+		target_cwnd *= ca->minRTT;
 		target_cwnd >>= LGC_SHIFT;
 		do_div(target_cwnd, tp->mss_cache * USEC_PER_MSEC);
 
@@ -222,7 +228,7 @@ static size_t tcp_lgc_get_info(struct sock *sk, u32 ext, int *attr,
 		memset(&info->lgc, 0, sizeof(info->lgc));
 		if (inet_csk(sk)->icsk_ca_ops != &lgc_reno) {
 			info->lgc.lgc_enabled = 1;
-			info->lgc.lgc_rate = ca->rate;
+			info->lgc.lgc_rate = (u32)(ca->rate >> LGC_SHIFT);
 			info->lgc.lgc_ab_ecn = tp->mss_cache *
 				      (tp->delivered_ce - ca->old_delivered_ce);
 			info->lgc.lgc_ab_tot = tp->mss_cache *
