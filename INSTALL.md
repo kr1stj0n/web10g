@@ -37,8 +37,8 @@ sudo make -j32 headers_install
 This is **VERY** helpful if you have a small boot partition.
 
 ```bash
-cd /lib/modules/5.4.0
-find . -name *.ko -exec strip --strip-unneeded {} +
+cd /lib/modules/5.4.0/
+sudo find . -name *.ko -exec strip --strip-unneeded {} +
 cd /home/ocarina/kristjoc/web10g/web10g-kis-0.13-5.4/
 sudo make install
 ```
@@ -116,3 +116,5 @@ sudo apt install ntp
 fab analyse_all:source_filter="S_172.16.10.2_"
 sudo fab analyse_all:source_filter="D_10.100.130.7_*"
 ```
+## Use iptables-legacy in Debian buster
+sudo update-alternatives --set iptables /usr/sbin/iptables-legacy

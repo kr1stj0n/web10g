@@ -31,10 +31,10 @@
 #include <linux/inet_diag.h>
 #include "tcp_lgc.h"
 
-#define LGC_SHIFT	(16U)
-#define ONE		(1U<<16U)
-#define THRESSH		((9U<<16U)/10U)    /* ~0.9  */
-#define FRAC_LIMIT	((99U<<16U)/100U)  /* ~0.99 */
+#define LGC_SHIFT	16
+#define ONE		(1U<<16)
+#define THRESSH		((9U<<16)/10U)    /* ~0.9  */
+#define FRAC_LIMIT	((99U<<16)/100U)  /* ~0.99 */
 
 struct lgc {
 	u32 old_delivered;
@@ -67,8 +67,8 @@ static unsigned int lgc_coef __read_mostly = 20u;
 module_param(lgc_coef, uint, 0644);
 MODULE_PARM_DESC(lgc_coef, "lgc_coef");
 
-/* lgc_max_rate = 1250 bytes/msec | 10Mbps */
-static unsigned int lgc_max_rate __read_mostly = 1250u;
+/* lgc_max_rate = 12500 bytes/msec | 100Mbps */
+static unsigned int lgc_max_rate __read_mostly = 12500u;
 module_param(lgc_max_rate, uint, 0644);
 MODULE_PARM_DESC(lgc_max_rate, "lgc_max_rate");
 /* End of Module parameters */
@@ -93,7 +93,7 @@ static void tcp_lgc_init(struct sock *sk)
 
 		ca->rate_eval = 0U;
 		ca->rate      = 1U;
-		ca->minRTT    = 1U<<20U; /* reference RTT ~1s */
+		ca->minRTT    = 1U<<20; /* reference RTT ~1s */
 		ca->fraction  = 0U;
 		lgc_reset(tp, ca);
 
@@ -177,14 +177,14 @@ static void lgc_update_rate(struct sock *sk)
 	WRITE_ONCE(ca->rate, rate);
 }
 
-static void tcp_lgc_update_rate(struct sock *sk, u32 ack, u32 acked)
+static void tcp_lgc_update_rate(struct sock *sk, const struct rate_sample *rs)
 {
 	struct tcp_sock *tp = tcp_sk(sk);
 	struct lgc *ca = inet_csk_ca(sk);
         ca->minRTT = min_not_zero(tcp_min_rtt(tp), ca->minRTT);
 
 	/* Expired RTT */
-	if (after(ack, ca->next_seq)) {
+	if (!before(tp->snd_una, ca->next_seq)) {
 		if (unlikely(!ca->rate_eval)) {
 			/* Calculate the initial rate in bytes/msec */
 			u32 init_rate = tp->snd_cwnd * tp->mss_cache * USEC_PER_MSEC;
@@ -239,8 +239,8 @@ static size_t tcp_lgc_get_info(struct sock *sk, u32 ext, int *attr,
 
 static struct tcp_congestion_ops lgc __read_mostly = {
 	.init		= tcp_lgc_init,
+	.cong_control	= tcp_lgc_update_rate,
 	.ssthresh	= tcp_reno_ssthresh,
-	.cong_avoid	= tcp_lgc_update_rate,
 	.undo_cwnd	= tcp_reno_undo_cwnd,
 	.get_info	= tcp_lgc_get_info,
 	.flags		= TCP_CONG_NEEDS_ECN,

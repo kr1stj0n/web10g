@@ -139,7 +139,7 @@ int tcp_estats_create(struct sock *sk, enum tcp_estats_addrtype addrtype,
 
 	/* update the peristence delay if necessary */
 	persist_delay = msecs_to_jiffies(READ_ONCE(sock_net(sk)->ipv4.sysctl_estats_delay));
-	
+
 	estats_mem = kzalloc(tcp_estats_get_allocation_size(sysctl), gfp_any());
 	if (!estats_mem)
 		return -ENOMEM;
@@ -226,15 +226,15 @@ void tcp_estats_destroy(struct sock *sk)
 	 * to persist for some period of time after the socket closes
 	 * allows us to get data on short lived flows and more accurate
 	 * stats
-	 */ 
-	
+	 */
+
 	if (likely(persist_delay == 0)) {
 		int id_cid;
 		id_cid = stats->tcpe_cid;
-		
+
 		if (id_cid == 0)
 			pr_devel("TCP estats destroyed before being established.\n");
-		
+
 		if (id_cid >= 0) {
 			if (id_cid) {
 				spin_lock_bh(&tcp_estats_idr_lock);
@@ -242,7 +242,7 @@ void tcp_estats_destroy(struct sock *sk)
 				spin_unlock_bh(&tcp_estats_idr_lock);
 			}
 			stats->tcpe_cid = -1;
-			
+
 			tcp_estats_unuse(stats);
 		}
 	} else {
@@ -277,7 +277,7 @@ void tcp_estats_establish(struct sock *sk)
 	struct tcp_estats_connection_table *conn_table;
 	int err;
 	err =  0;
-	
+
 	if (stats == NULL)
 		return;
 
@@ -320,7 +320,7 @@ void tcp_estats_establish(struct sock *sk)
 		pr_err("TCP estats container established multiple times.\n");
 		return;
 	}
-	
+
 	if ((stats->tcpe_cid) == 0) {
 		err = get_new_cid(stats);
 		if (err)
@@ -556,7 +556,7 @@ void tcp_estats_update_segsend(struct sock *sk, int pcount,
 	/*perf_table->SegsOut += pcount;*/
 
 	/* A pure ACK contains no data; everything else is data. */
-	if (data_len > 0) { 
+	if (data_len > 0) {
 		/*perf_table->DataSegsOut += pcount;*/
 		perf_table->DataOctetsOut += data_len;
 		}
@@ -582,7 +582,7 @@ void tcp_estats_update_segrecv(struct tcp_sock *tp, struct sk_buff *skb)
 	struct iphdr *iph = ip_hdr(skb);
 
 	/*if (perf_table != NULL)
-	  perf_table->SegsIn++;*/ 
+	  perf_table->SegsIn++;*/
 
 	if (skb->len == th->doff * 4) {
 		if (stack_table != NULL &&
