@@ -11,6 +11,8 @@ build_stack() {
          sudo find /lib/modules/5.4.0/ -name *.ko -exec strip --strip-unneeded {} +;
          sudo rm -rf /boot/*5.4.0*;
          sudo make -j32 install"
+
+    #eval $CMD
 }
 
 build_modules() {
