@@ -107,6 +107,38 @@ static void tcp_lgc_init(struct sock *sk)
 	INET_ECN_dontxmit(sk);
 }
 
+static void lgc_update_pacing_rate(struct sock *sk)
+{
+	const struct tcp_sock *tp = tcp_sk(sk);
+	u64 rate;
+
+	/* set sk_pacing_rate to 200 % of current rate (mss * cwnd / srtt) */
+	rate = (u64)tp->mss_cache * ((USEC_PER_SEC / 100) << 3);
+
+	/* current rate is (cwnd * mss) / srtt
+	 * In Slow Start [1], set sk_pacing_rate to 200 % the current rate.
+	 * In Congestion Avoidance phase, set it to 120 % the current rate.
+	 *
+	 * [1] : Normal Slow Start condition is (tp->snd_cwnd < tp->snd_ssthresh)
+	 *	 If snd_cwnd >= (tp->snd_ssthresh / 2), we are approaching
+	 *	 end of slow start and should slow down.
+	 */
+
+	rate *= 120U;
+
+	rate *= max(tp->snd_cwnd, tp->packets_out);
+
+	if (likely(ca->minRTT))
+		do_div(rate, ca->minRTT);
+
+	/* WRITE_ONCE() is needed because sch_fq fetches sk_pacing_rate
+	 * without any lock. We want to make sure compiler wont store
+	 * intermediate values in this location.
+	 */
+	WRITE_ONCE(sk->sk_pacing_rate, min_t(u64, rate,
+					     sk->sk_max_pacing_rate));
+}
+
 static void lgc_update_rate(struct sock *sk)
 {
 	struct tcp_sock *tp = tcp_sk(sk);
@@ -208,6 +240,8 @@ static void tcp_lgc_update_rate(struct sock *sk, const struct rate_sample *rs)
 
 		lgc_reset(tp, ca);
 	}
+
+	lgc_update_pacing_rate(sk);
 }
 
 static size_t tcp_lgc_get_info(struct sock *sk, u32 ext, int *attr,
