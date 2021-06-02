@@ -110,6 +110,7 @@ static void tcp_lgc_init(struct sock *sk)
 static void lgc_update_pacing_rate(struct sock *sk)
 {
 	const struct tcp_sock *tp = tcp_sk(sk);
+	const struct lgc *ca = inet_csk_ca(sk);
 	u64 rate;
 
 	/* set sk_pacing_rate to 200 % of current rate (mss * cwnd / srtt) */
