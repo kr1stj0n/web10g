@@ -52,7 +52,8 @@ struct lgc {
 	u32 old_delivered;
 	u32 old_delivered_ce;
 	u32 next_seq;
-	u32 rate;		/* current rate in bytes / sec */
+	u32 max_rate;		/* link capacity in pkts/uSec << LGC_SHIFT */
+	u32 rate;		/* current rate in pkts/uSec << BW_SCALE */
 	u32 pacing_gain;
 	u32 minRTT;
 	u32 fraction;
@@ -80,8 +81,8 @@ static unsigned int lgc_coef __read_mostly = 20u;
 module_param(lgc_coef, uint, 0644);
 MODULE_PARM_DESC(lgc_coef, "lgc_coef");
 
-/* lgc_max_rate = 12500000 bytes/sec | 100Mbps */
-static unsigned int lgc_max_rate __read_mostly = 1250000u;
+/* lgc_max_rate = 100Mbps */
+static unsigned int lgc_max_rate __read_mostly = 100u;
 module_param(lgc_max_rate, uint, 0644);
 MODULE_PARM_DESC(lgc_max_rate, "lgc_max_rate");
 /* End of Module parameters */
@@ -134,11 +135,12 @@ static void tcp_lgc_init(struct sock *sk)
                                         || (tp->ecn_flags & TCP_ECN_OK)) {
 		struct lgc *ca = inet_csk_ca(sk);
 
-		ca->rate_eval   = 0;
-		ca->rate        = 1U;
-		ca->pacing_gain = lgc_high_gain;
-		ca->minRTT      = 1U<<20; /* reference RTT ~1s */
-		ca->fraction    = 0U;
+		ca->rate_eval	= 0;
+		ca->max_rate	= lgc_max_rate_to_rate(sk);
+		ca->rate	= 0U;
+		ca->pacing_gain	= lgc_high_gain;
+		ca->minRTT	= 1U<<20; /* reference RTT ~1s */
+		ca->fraction	= 0U;
 		lgc_reset(tp, ca);
 
 		return;
@@ -149,6 +151,20 @@ static void tcp_lgc_init(struct sock *sk)
 	 */
 	inet_csk(sk)->icsk_ca_ops = &lgc_reno;
 	INET_ECN_dontxmit(sk);
+}
+
+/* Convert lgx_max_rate to pkts/uSec << LGC_SHIFT.
+ */
+static u32 lgc_max_rate_to_rate(struct sock *sk)
+{
+	unsigned int mss = tcp_sk(sk)->mss_cache;
+	u64 max_rate = (u64)lgc_max_rate;
+
+	max_rate <<= LGC_SHIFT;
+	do_div(max_rate, mss);	/* from bytes to pkts */
+	max_rate >>= 3;		/* from bits to bytes*/
+
+	return (u32)max_rate;
 }
 
 /* Return rate in bytes per second, optionally with a gain.
@@ -167,7 +183,7 @@ static u64 lgc_rate_bytes_per_sec(struct sock *sk, u64 rate, u32 gain)
 }
 
 /* Convert a LGC bw and gain factor to a pacing rate in bytes per second. */
-static unsigned long lgc_bw_to_pacing_rate(struct sock *sk, u32 bw, int gain)
+static unsigned long lgc_bw_to_pacing_rate(struct sock *sk, u32 bw, u32 gain)
 {
 	u64 rate = bw;
 
@@ -181,20 +197,16 @@ static void lgc_update_pacing_rate(struct sock *sk)
 	struct tcp_sock *tp = tcp_sk(sk);
 	struct lgc *ca = inet_csk_ca(sk);
 	unsigned long pacing_rate;
-	u64 rate;
 
 	if (unlikely(!ca->rate_eval && ca->minRTT)) {
-		/* Calculate the initial rate in bytes/sec */
+		/* Calculate the initial rate in pkts/uSec << BW_SCALE */
 		u64 init_rate = (u64)tp->snd_cwnd * BW_UNIT;
 		do_div(init_rate, ca->minRTT);
-		init_rate = lgc_rate_bytes_per_sec(sk, init_rate, lgc_no_gain);
 		ca->rate = (u32)init_rate;
 		ca->rate_eval = 1;
 	}
 
-	rate = (u64)ca->rate;
-
-	pacing_rate = lgc_bw_to_pacing_rate(sk, rate, ca->pacing_gain);
+	pacing_rate = lgc_bw_to_pacing_rate(sk, ca->rate, ca->pacing_gain);
 
 	/* WRITE_ONCE() is needed because sch_fq fetches sk_pacing_rate
 	 * without any lock. We want to make sure compiler wont store
@@ -236,9 +248,9 @@ static void lgc_update_rate(struct sock *sk)
 		q = lgc_log_lut_lookup(ca->fraction) / lgc_logPhi_11;
 
 	/* Calculate gradient */
-	rate <<= LGC_SHIFT;
-	do_div(rate, lgc_max_rate);
-	s32 gradient = (s32)((s32)(ONE) - (s32)rate - (s32)q);
+	u64 c_rate = rate << LGC_SCALE;
+	do_div(c_rate, ca->max_rate);
+	s32 gradient = (s32)((s32)(ONE) - (s32)c_rate - (s32)q);
 
 	u32 gr = 1U<<30;
 	if (delivered_ce == ONE)
@@ -252,12 +264,10 @@ static void lgc_update_rate(struct sock *sk)
 	gr_rate_gradient *= gr;
 	gr_rate_gradient *= lgc_logP_16;
 	gr_rate_gradient >>= 30;	/* 16-bit scaled at this point */
-	gr_rate_gradient *= ca->rate;
+	gr_rate_gradient *= rate;
 	gr_rate_gradient *= gradient;
-	gr_rate_gradient >>= 16;	/* back to 16-bit scaled */
+	gr_rate_gradient >>= 32;	/* back to 24-bit scaled */
 
-	rate = (u64)ca->rate;
-	rate <<= LGC_SHIFT;
 	u64 new_rate = rate + gr_rate_gradient;
 
 	/* new rate shouldn't increase more than twice */
@@ -273,9 +283,10 @@ static void lgc_update_rate(struct sock *sk)
 	}
 
 	/* Check if the new rate exceeds the link capacity */
-	rate >>= LGC_SHIFT;
-	if (rate > (u64)lgc_max_rate) {
-		rate = (u64)lgc_max_rate;
+	u64 max_rate = (u64)ca->max_rate;
+	max_rate <<= LGC_SCALE;
+	if (rate > max_rate) {
+		rate = max_rate;
 		ca->pacing_gain = lgc_no_gain;
 	}
 
@@ -284,6 +295,31 @@ static void lgc_update_rate(struct sock *sk)
 	 * as a temporary variable in prior operations.
 	 */
 	WRITE_ONCE(ca->rate, (u32)rate);
+}
+
+/* Calculate bdp based on min RTT and the estimated bottleneck bandwidth:
+ *
+ * bdp = ceil(bw * min_rtt * gain)
+ *
+ * The key factor, gain, controls the amount of queue. While a small gain
+ * builds a smaller queue, it becomes more vulnerable to noise in RTT
+ * measurements (e.g., delayed ACKs or other ACK compression effects). This
+ * noise may cause LGC to under-estimate the rate.
+ */
+static u32 lgc_bdp(struct sock *sk, u32 bw, u32 gain)
+{
+	struct lgc *ca = inet_csk_ca(sk);
+	u32 bdp;
+	u64 w;
+
+	w = (u64)bw * ca->minRTT;
+
+	/* Apply a gain to the given value, remove the LGC_SCALE shift, and
+	 * round the value up to avoid a negative feedback loop.
+	 */
+	bdp = (((w * gain) >> LGC_SCALE) + LGC_UNIT - 1) / LGC_UNIT;
+
+	return bdp;
 }
 
 static void tcp_lgc_main(struct sock *sk, const struct rate_sample *rs)
@@ -303,12 +339,7 @@ static void tcp_lgc_main(struct sock *sk, const struct rate_sample *rs)
 
 		lgc_update_rate(sk);
 
-		u64 target_cwnd = 1ULL;
-		target_cwnd *= ca->rate;
-		target_cwnd *= ca->minRTT;
-		do_div(target_cwnd, tp->mss_cache * USEC_PER_SEC);
-
-		tp->snd_cwnd = max((u32)target_cwnd + 1, 2U);
+		tp->snd_cwnd = max(lgc_bdp(sk, ca->rate, lgc_no_gain), 2U);
 
 		if (tp->snd_cwnd > tp->snd_cwnd_clamp)
 			tp->snd_cwnd = tp->snd_cwnd_clamp;
