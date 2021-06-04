@@ -178,8 +178,8 @@ static unsigned long lgc_bw_to_pacing_rate(struct sock *sk, u32 bw, int gain)
 
 static void lgc_update_pacing_rate(struct sock *sk)
 {
-	const struct tcp_sock *tp = tcp_sk(sk);
-	const struct lgc *ca = inet_csk_ca(sk);
+	struct tcp_sock *tp = tcp_sk(sk);
+	struct lgc *ca = inet_csk_ca(sk);
 	unsigned long pacing_rate;
 	u64 rate;
 
@@ -268,7 +268,7 @@ static void lgc_update_rate(struct sock *sk)
 		if (new_rate < rate)
 			ca->pacing_gain = lgc_drain_gain;
 		else if (new_rate > rate)
-			ca->pacing_rate = ;
+			ca->pacing_gain = lgc_low_gain;
 		rate = new_rate;
 	}
 
