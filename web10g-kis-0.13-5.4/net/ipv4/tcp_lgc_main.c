@@ -318,7 +318,7 @@ static u32 lgc_bdp(struct sock *sk, u32 bw, u32 gain)
 	/* Apply a gain to the given value, remove the LGC_SCALE shift, and
 	 * round the value up to avoid a negative feedback loop.
 	 */
-	bdp = (((w * gain) >> LGC_SCALE) + LGC_UNIT - 1) / LGC_UNIT;
+	bdp = (((w * gain) >> LGC_SCALE) + BW_UNIT - 1) / BW_UNIT;
 
 	return bdp;
 }
