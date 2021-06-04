@@ -151,7 +151,7 @@ static void tcp_lgc_init(struct sock *sk)
 
 		ca->rate_eval	= 0;
 		ca->max_rate	= lgc_max_rate_to_rate(sk);
-		ca->rate	= 0U;
+		ca->rate	= 1U;
 		ca->pacing_gain	= lgc_high_gain;
 		ca->minRTT	= 1U<<20; /* reference RTT ~1s */
 		ca->fraction	= 0U;
@@ -185,7 +185,7 @@ static u64 lgc_rate_bytes_per_sec(struct sock *sk, u64 rate, u32 gain)
 /* Convert a LGC bw and gain factor to a pacing rate in bytes per second. */
 static unsigned long lgc_bw_to_pacing_rate(struct sock *sk, u32 bw, u32 gain)
 {
-	u64 rate = bw;
+	u64 rate = (u64)bw;
 
 	rate = lgc_rate_bytes_per_sec(sk, rate, gain);
 	rate = min_t(u64, rate, sk->sk_max_pacing_rate);
@@ -265,8 +265,9 @@ static void lgc_update_rate(struct sock *sk)
 	gr_rate_gradient *= lgc_logP_16;
 	gr_rate_gradient >>= 30;	/* 16-bit scaled at this point */
 	gr_rate_gradient *= rate;
+	gr_rate_gradient >>= 16;	/* back to 24-bit scaled */
 	gr_rate_gradient *= gradient;
-	gr_rate_gradient >>= 32;	/* back to 24-bit scaled */
+	gr_rate_gradient >>= 16;	/* back to 24-bit scaled */
 
 	u64 new_rate = rate + gr_rate_gradient;
 
