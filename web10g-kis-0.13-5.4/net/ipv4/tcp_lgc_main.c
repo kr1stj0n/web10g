@@ -127,6 +127,20 @@ static void lgc_reset(const struct tcp_sock *tp, struct lgc *ca)
 	ca->old_delivered_ce = tp->delivered_ce;
 }
 
+/* Convert lgx_max_rate to pkts/uSec << LGC_SHIFT.
+ */
+static u32 lgc_max_rate_to_rate(struct sock *sk)
+{
+	unsigned int mss = tcp_sk(sk)->mss_cache;
+	u64 max_rate = (u64)lgc_max_rate;
+
+	max_rate <<= LGC_SHIFT;
+	do_div(max_rate, mss);	/* from bytes to pkts */
+	max_rate >>= 3;		/* from bits to bytes*/
+
+	return (u32)max_rate;
+}
+
 static void tcp_lgc_init(struct sock *sk)
 {
 	const struct tcp_sock *tp = tcp_sk(sk);
@@ -151,20 +165,6 @@ static void tcp_lgc_init(struct sock *sk)
 	 */
 	inet_csk(sk)->icsk_ca_ops = &lgc_reno;
 	INET_ECN_dontxmit(sk);
-}
-
-/* Convert lgx_max_rate to pkts/uSec << LGC_SHIFT.
- */
-static u32 lgc_max_rate_to_rate(struct sock *sk)
-{
-	unsigned int mss = tcp_sk(sk)->mss_cache;
-	u64 max_rate = (u64)lgc_max_rate;
-
-	max_rate <<= LGC_SHIFT;
-	do_div(max_rate, mss);	/* from bytes to pkts */
-	max_rate >>= 3;		/* from bits to bytes*/
-
-	return (u32)max_rate;
 }
 
 /* Return rate in bytes per second, optionally with a gain.
