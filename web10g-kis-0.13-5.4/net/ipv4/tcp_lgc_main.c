@@ -274,10 +274,10 @@ static void lgc_update_rate(struct sock *sk)
 	/* new rate shouldn't increase more than twice */
 	if (new_rate > (rate << 1)) {
 		rate <<= 1;
-		ca->pacing_gain = lgc_high_gain;
+		ca->pacing_gain = lgc_low_gain;
 	} else {
 		if (new_rate < rate)
-			ca->pacing_gain = lgc_drain_gain;
+			ca->pacing_gain = lgc_low_gain;
 		else if (new_rate > rate)
 			ca->pacing_gain = lgc_low_gain;
 		rate = new_rate;
@@ -288,7 +288,7 @@ static void lgc_update_rate(struct sock *sk)
 	max_rate <<= LGC_SCALE;
 	if (rate > max_rate) {
 		rate = max_rate;
-		ca->pacing_gain = lgc_no_gain;
+		ca->pacing_gain = lgc_low_gain;
 	}
 
 	/* lgc_rate can be read from lgc_get_info() without
@@ -315,7 +315,7 @@ static u32 lgc_bdp(struct sock *sk, u32 bw, u32 gain)
 
 	w = (u64)bw * ca->minRTT;
 
-	/* Apply a gain to the given value, remove the LGC_SCALE shift, and
+	/* Apply a gain to the given value, remove the BW_SCALE shift, and
 	 * round the value up to avoid a negative feedback loop.
 	 */
 	bdp = (((w * gain) >> LGC_SCALE) + BW_UNIT - 1) / BW_UNIT;
