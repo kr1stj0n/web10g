@@ -177,7 +177,7 @@ static u64 lgc_rate_bytes_per_sec(struct sock *sk, u64 rate, u32 gain)
 
 	rate *= mss;
 	rate *= gain;
-	rate >>= LGC_SCALE;
+	rate >>= LGC_SCALE_8;
 	rate *= USEC_PER_SEC / 100 * (100 - lgc_pacing_margin_percent);
 	return rate >> BW_SCALE_24;
 }
@@ -200,7 +200,7 @@ static void lgc_update_pacing_rate(struct sock *sk)
 
 	if (unlikely(!ca->rate_eval && ca->minRTT)) {
 		/* Calculate the initial rate in pkts/uSec << BW_SCALE_24 */
-		u64 init_rate = (u64)tp->snd_cwnd * BW_UNIT;
+		u64 init_rate = (u64)tp->snd_cwnd * BW_UNIT_24;
 		do_div(init_rate, ca->minRTT);
 		ca->rate = (u32)init_rate;
 		ca->rate_eval = 1;
@@ -248,7 +248,7 @@ static void lgc_update_rate(struct sock *sk)
 		q = lgc_log_lut_lookup(ca->fraction) / lgc_logPhi_11;
 
 	/* Calculate gradient */
-	u64 c_rate = rate << LGC_SCALE;
+	u64 c_rate = rate << LGC_SCALE_8;
 	do_div(c_rate, ca->max_rate);
 	s32 gradient = (s32)((s32)(ONE) - (s32)c_rate - (s32)q);
 
@@ -285,7 +285,7 @@ static void lgc_update_rate(struct sock *sk)
 
 	/* Check if the new rate exceeds the link capacity */
 	u64 max_rate = (u64)ca->max_rate;
-	max_rate <<= LGC_SCALE;
+	max_rate <<= LGC_SCALE_8;
 	if (rate > max_rate) {
 		rate = max_rate;
 		ca->pacing_gain = lgc_low_gain;
@@ -318,7 +318,7 @@ static u32 lgc_bdp(struct sock *sk, u32 bw, u32 gain)
 	/* Apply a gain to the given value, remove the BW_SCALE_24 shift, and
 	 * round the value up to avoid a negative feedback loop.
 	 */
-	bdp = (((w * gain) >> LGC_SCALE) + BW_UNIT - 1) / BW_UNIT;
+	bdp = (((w * gain) >> LGC_SCALE_8) + BW_UNIT_24 - 1) / BW_UNIT_24;
 
 	return bdp;
 }
