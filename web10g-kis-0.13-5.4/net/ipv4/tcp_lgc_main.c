@@ -37,13 +37,13 @@
  * Since the minimum window is >=4 packets, the lower bound isn't
  * an issue. The upper bound isn't an issue with existing technologies.
  */
-#define BW_SCALE 24
-#define BW_UNIT (1 << BW_SCALE)
+#define BW_SCALE_24 24
+#define BW_UNIT_24 (1 << BW_SCALE_24)
 
-#define LGC_SCALE 8	/* scaling factor for fractions in LGC (e.g. gains) */
-#define LGC_UNIT (1 << LGC_SCALE)
+#define LGC_SCALE_8 8	/* scaling factor for fractions in LGC (e.g. gains) */
+#define LGC_UNIT_8 (1 << LGC_SCALE_8)
 
-#define LGC_SHIFT	16
+#define LGC_SHIFT_16	16
 #define ONE		(1U<<16)
 #define THRESSH		((9U<<16)/10U)    /* ~0.9  */
 #define FRAC_LIMIT	((99U<<16)/100U)  /* ~0.99 */
@@ -52,8 +52,8 @@ struct lgc {
 	u32 old_delivered;
 	u32 old_delivered_ce;
 	u32 next_seq;
-	u32 max_rate;		/* link capacity in pkts/uSec << LGC_SHIFT */
-	u32 rate;		/* current rate in pkts/uSec << BW_SCALE */
+	u32 max_rate;		/* link capacity in pkts/uSec << LGC_SHIFT_16 */
+	u32 rate;		/* current rate in pkts/uSec << BW_SCALE_24 */
 	u32 pacing_gain;
 	u32 minRTT;
 	u32 fraction;
@@ -100,22 +100,22 @@ static const u32 lgc_pacing_margin_percent = 1;
  * and send the same number of packets per RTT that an un-paced, slow-starting
  * Reno or CUBIC flow would:
  */
-static const u32 lgc_high_gain = LGC_UNIT * 2885 / 1000 + 1;
+static const u32 lgc_high_gain = LGC_UNIT_8 * 2885 / 1000 + 1;
 
 /*
  * Mehh 1/ln(2)
  */
-static const u32 lgc_low_gain  = LGC_UNIT * 1442 / 1000 + 1;
+static const u32 lgc_low_gain  = LGC_UNIT_8 * 1442 / 1000 + 1;
 
 
 /* The pacing gain of 1/high_gain in LGC_DRAIN is calculated to typically drain
  * the queue created in LGC_STARTUP in a single round:
  */
-static const u32 lgc_drain_gain = LGC_UNIT * 1000 / 2885;
+static const u32 lgc_drain_gain = LGC_UNIT_8 * 1000 / 2885;
 /*
  * Used for init_rate only and when sender is fully utilizing the link.
  */
-static const u32 lgc_no_gain = LGC_UNIT;
+static const u32 lgc_no_gain = LGC_UNIT_8;
 
 static struct tcp_congestion_ops lgc_reno;
 
@@ -127,14 +127,14 @@ static void lgc_reset(const struct tcp_sock *tp, struct lgc *ca)
 	ca->old_delivered_ce = tp->delivered_ce;
 }
 
-/* Convert lgx_max_rate to pkts/uSec << LGC_SHIFT.
+/* Convert lgx_max_rate to pkts/uSec << LGC_SHIFT_16.
  */
 static u32 lgc_max_rate_to_rate(struct sock *sk)
 {
 	unsigned int mss = tcp_sk(sk)->mss_cache;
 	u64 max_rate = (u64)lgc_max_rate;
 
-	max_rate <<= LGC_SHIFT;
+	max_rate <<= LGC_SHIFT_16;
 	do_div(max_rate, mss);	/* from bytes to pkts */
 	max_rate >>= 3;		/* from bits to bytes*/
 
@@ -179,7 +179,7 @@ static u64 lgc_rate_bytes_per_sec(struct sock *sk, u64 rate, u32 gain)
 	rate *= gain;
 	rate >>= LGC_SCALE;
 	rate *= USEC_PER_SEC / 100 * (100 - lgc_pacing_margin_percent);
-	return rate >> BW_SCALE;
+	return rate >> BW_SCALE_24;
 }
 
 /* Convert a LGC bw and gain factor to a pacing rate in bytes per second. */
@@ -199,7 +199,7 @@ static void lgc_update_pacing_rate(struct sock *sk)
 	unsigned long pacing_rate;
 
 	if (unlikely(!ca->rate_eval && ca->minRTT)) {
-		/* Calculate the initial rate in pkts/uSec << BW_SCALE */
+		/* Calculate the initial rate in pkts/uSec << BW_SCALE_24 */
 		u64 init_rate = (u64)tp->snd_cwnd * BW_UNIT;
 		do_div(init_rate, ca->minRTT);
 		ca->rate = (u32)init_rate;
@@ -225,22 +225,22 @@ static void lgc_update_rate(struct sock *sk)
 	u32 delivered_ce = tp->delivered_ce - ca->old_delivered_ce;
 	u32 delivered = tp->delivered - ca->old_delivered;
 
-	delivered_ce <<= LGC_SHIFT;
+	delivered_ce <<= LGC_SHIFT_16;
 	delivered_ce /= max(1U, delivered);
 
 	u32 fraction = 0U;
 	if (delivered_ce >= THRESSH) {
 		fraction = ((ONE - lgc_alpha_16) * ca->fraction) +
 			(lgc_alpha_16 * delivered_ce);
-		ca->fraction = fraction >> LGC_SHIFT;
+		ca->fraction = fraction >> LGC_SHIFT_16;
 	} else {
 		fraction = (ONE - lgc_alpha_16) * ca->fraction;
-		ca->fraction = fraction >> LGC_SHIFT;
+		ca->fraction = fraction >> LGC_SHIFT_16;
 	}
 	if (ca->fraction == ONE)
 		ca->fraction = FRAC_LIMIT;
 
-	/* At this point, we have a ca->fraction = [0,1) << LGC_SHIFT */
+	/* At this point, we have a ca->fraction = [0,1) << LGC_SHIFT_16 */
 
 	/* after the division, q is FP << 16 */
 	u32 q = 0U;
@@ -315,7 +315,7 @@ static u32 lgc_bdp(struct sock *sk, u32 bw, u32 gain)
 
 	w = (u64)bw * ca->minRTT;
 
-	/* Apply a gain to the given value, remove the BW_SCALE shift, and
+	/* Apply a gain to the given value, remove the BW_SCALE_24 shift, and
 	 * round the value up to avoid a negative feedback loop.
 	 */
 	bdp = (((w * gain) >> LGC_SCALE) + BW_UNIT - 1) / BW_UNIT;
