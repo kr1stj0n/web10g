@@ -38,10 +38,10 @@
  * an issue. The upper bound isn't an issue with existing technologies.
  */
 #define BW_SCALE_24 24
-#define BW_UNIT_24 (1 << BW_SCALE_24)
+#define BW_UNIT_24 (1U << BW_SCALE_24)
 
 #define LGC_SCALE_8 8	/* scaling factor for fractions in LGC (e.g. gains) */
-#define LGC_UNIT_8 (1 << LGC_SCALE_8)
+#define LGC_UNIT_8 (1U << LGC_SCALE_8)
 
 #define LGC_SHIFT_16	16
 #define ONE		(1U<<16)
@@ -62,27 +62,27 @@ struct lgc {
 
 /* Module parameters */
 /* lgc_logPhi_11 = log2(2.78) * 2^11 */
-static unsigned int lgc_logPhi_11 __read_mostly = 3020u;
+static unsigned int lgc_logPhi_11 __read_mostly = 3020;
 module_param(lgc_logPhi_11, uint, 0644);
 MODULE_PARM_DESC(lgc_logPhi_11, "scaled log(phi)");
 
 /* lgc_alpha_16 = alpha << 16 = 0.25 * 2^16 */
-static unsigned int lgc_alpha_16 __read_mostly = 16384u;
+static unsigned int lgc_alpha_16 __read_mostly = 16384;
 module_param(lgc_alpha_16, uint, 0644);
 MODULE_PARM_DESC(lgc_alpha_16, "scaled alpha");
 
 /* lgc_logP_16 = loge(1.4) * 2^16 */
-static unsigned int lgc_logP_16 __read_mostly = 22051u;
+static unsigned int lgc_logP_16 __read_mostly = 22051;
 module_param(lgc_logP_16, uint, 0644);
 MODULE_PARM_DESC(lgc_logP_16, "scaled logP");
 
 /* lgc_coef = 20 */
-static unsigned int lgc_coef __read_mostly = 20u;
+static unsigned int lgc_coef __read_mostly = 20;
 module_param(lgc_coef, uint, 0644);
 MODULE_PARM_DESC(lgc_coef, "lgc_coef");
 
 /* lgc_max_rate = 100Mbps */
-static unsigned int lgc_max_rate __read_mostly = 100u;
+static unsigned int lgc_max_rate __read_mostly = 100;
 module_param(lgc_max_rate, uint, 0644);
 MODULE_PARM_DESC(lgc_max_rate, "lgc_max_rate");
 /* End of Module parameters */
@@ -111,11 +111,11 @@ static const u32 lgc_low_gain  = LGC_UNIT_8 * 1442 / 1000 + 1;
 /* The pacing gain of 1/high_gain in LGC_DRAIN is calculated to typically drain
  * the queue created in LGC_STARTUP in a single round:
  */
-static const u32 lgc_drain_gain = LGC_UNIT_8 * 1000 / 2885;
+static const u32 lgc_drain_gain = LGC_UNIT_8 * 1000 / 2885 + 1;
 /*
  * Used for init_rate only and when sender is fully utilizing the link.
  */
-static const u32 lgc_no_gain = LGC_UNIT_8;
+static const u32 lgc_no_gain = LGC_UNIT_8 * 1000 / 1000 + 1;
 
 static struct tcp_congestion_ops lgc_reno;
 
@@ -127,18 +127,17 @@ static void lgc_reset(const struct tcp_sock *tp, struct lgc *ca)
 	ca->old_delivered_ce = tp->delivered_ce;
 }
 
-/* Convert lgx_max_rate to pkts/uSec << LGC_SHIFT_16.
+/* Convert lgx_max_rate to pkts/uSec << BW_SCALE_24.
  */
 static u32 lgc_max_rate_to_rate(struct sock *sk)
 {
 	unsigned int mss = tcp_sk(sk)->mss_cache;
 	u64 max_rate = (u64)lgc_max_rate;
 
-	max_rate <<= LGC_SHIFT_16;
+	max_rate <<= BW_SCALE_24;
 	do_div(max_rate, mss);	/* from bytes to pkts */
-	max_rate >>= 3;		/* from bits to bytes*/
 
-	return (u32)max_rate;
+	return (u32)(DIV_ROUND_DOWN_ULL(max_rate, BITS_PER_BYTE));
 }
 
 static void tcp_lgc_init(struct sock *sk)
@@ -248,7 +247,7 @@ static void lgc_update_rate(struct sock *sk)
 		q = lgc_log_lut_lookup(ca->fraction) / lgc_logPhi_11;
 
 	/* Calculate gradient */
-	u64 c_rate = rate << LGC_SCALE_8;
+	u64 c_rate = rate << LGC_SHIFT_16;
 	do_div(c_rate, ca->max_rate);
 	s32 gradient = (s32)((s32)(ONE) - (s32)c_rate - (s32)q);
 
@@ -284,10 +283,8 @@ static void lgc_update_rate(struct sock *sk)
 	}
 
 	/* Check if the new rate exceeds the link capacity */
-	u64 max_rate = (u64)ca->max_rate;
-	max_rate <<= LGC_SCALE_8;
-	if (rate > max_rate) {
-		rate = max_rate;
+	if (rate > ca->max_rate) {
+		rate = ca->max_rate;
 		ca->pacing_gain = lgc_low_gain;
 	}
 
@@ -333,10 +330,17 @@ static void tcp_lgc_main(struct sock *sk, const struct rate_sample *rs)
 	 * Update pacing rate upon every ACK.
 	 * This seems better way, because it will react to minRTT.
 	 */
-	lgc_update_pacing_rate(sk);
+	//lgc_update_pacing_rate(sk);
 
 	/* Expired RTT */
 	if (!before(tp->snd_una, ca->next_seq)) {
+		if (unlikely(!ca->rate_eval)) {
+		/* Calculate the initial rate in pkts/uSec << BW_SCALE_24 */
+			u64 init_rate = (u64)tp->snd_cwnd * BW_UNIT_24;
+			do_div(init_rate, ca->minRTT);
+			ca->rate = (u32)init_rate;
+			ca->rate_eval = 1;
+		}
 
 		lgc_update_rate(sk);
 
