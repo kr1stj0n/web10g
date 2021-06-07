@@ -32,7 +32,7 @@
 #include "tcp_lgc.h"
 
 #define LGC_SHIFT	16
-#define LGC_UNIT		(1U<<16)
+#define ONE		(1U<<16)
 #define THRESSH		((9U<<16)/10U)    /* ~0.9  */
 #define FRAC_LIMIT	((99U<<16)/100U)  /* ~0.99 */
 
@@ -41,7 +41,6 @@ struct lgc {
 	u32 old_delivered_ce;
 	u32 next_seq;
 	u32 rate;
-	u32 max_rate;
 	u32 minRTT;
 	u32 fraction;
 	u8  rate_eval:1;
@@ -68,25 +67,13 @@ static unsigned int lgc_coef __read_mostly = 20;
 module_param(lgc_coef, uint, 0644);
 MODULE_PARM_DESC(lgc_coef, "lgc_coef");
 
-/* lgc_max_rate = 100 bits/uSec = 100Mbps */
-static unsigned int lgc_max_rate __read_mostly = 100;
+/* lgc_max_rate = 12500 bytes/msec | 100Mbps */
+static unsigned int lgc_max_rate __read_mostly = 12500;
 module_param(lgc_max_rate, uint, 0644);
 MODULE_PARM_DESC(lgc_max_rate, "lgc_max_rate");
 /* End of Module parameters */
 
 static struct tcp_congestion_ops lgc_reno;
-
-
-/* Convert lgx_max_rate to bytes/mSec << LGC_SHIFT
- */
-static u32 lgc_max_rate(void)
-{
-	u64 max_rate = (u64)lgc_max_rate;
-
-	max_rate *= USEC_PER_MSEC;
-
-	return (u32)(DIV_ROUND_DOWN_ULL(max_rate, BITS_PER_BYTE));
-}
 
 static void lgc_reset(const struct tcp_sock *tp, struct lgc *ca)
 {
@@ -106,7 +93,6 @@ static void tcp_lgc_init(struct sock *sk)
 
 		ca->rate_eval = 0U;
 		ca->rate      = 1U;
-		ca->max_rate  = lgc_max_rate();
 		ca->minRTT    = 1U<<20; /* reference RTT ~1s */
 		ca->fraction  = 0U;
 		lgc_reset(tp, ca);
@@ -139,7 +125,7 @@ static void lgc_update_pacing_rate(struct sock *sk)
 	 *	 end of slow start and should slow down.
 	 */
 
-	rate *= 120U;
+	rate *= 125U;
 
 	rate *= max(tp->snd_cwnd, tp->packets_out);
 
@@ -168,14 +154,14 @@ static void lgc_update_rate(struct sock *sk)
 
 	u32 fraction = 0U;
 	if (delivered_ce >= THRESSH) {
-		fraction = ((LGC_UNIT - lgc_alpha_16) * ca->fraction) +
+		fraction = ((ONE - lgc_alpha_16) * ca->fraction) +
 			(lgc_alpha_16 * delivered_ce);
 		ca->fraction = fraction >> LGC_SHIFT;
 	} else {
-		fraction = (LGC_UNIT - lgc_alpha_16) * ca->fraction;
+		fraction = (ONE - lgc_alpha_16) * ca->fraction;
 		ca->fraction = fraction >> LGC_SHIFT;
 	}
-	if (ca->fraction == LGC_UNIT)
+	if (ca->fraction == ONE)
 		ca->fraction = FRAC_LIMIT;
 
 	/* At this point, we have a ca->fraction = [0,1) << LGC_SHIFT */
@@ -186,10 +172,10 @@ static void lgc_update_rate(struct sock *sk)
 		q = lgc_log_lut_lookup(ca->fraction) / lgc_logPhi_11;
 
 	/* Calculate gradient */
-	s32 gradient = (s32)((s32)(LGC_UNIT) - (s32)(rate / ca->max_rate) - (s32)q);
+	s32 gradient = (s32)((s32)(ONE) - (s32)(rate / lgc_max_rate) - (s32)q);
 
 	u32 gr = 1U<<30;
-	if (delivered_ce == LGC_UNIT)
+	if (delivered_ce == ONE)
 		gr /= lgc_coef;
 	else {
 		if (delivered_ce)
@@ -213,7 +199,7 @@ static void lgc_update_rate(struct sock *sk)
 		rate = new_rate;
 
 	/* Check if the new rate exceeds the link capacity */
-	u32 max_rate_scaled = ca->max_rate << LGC_SHIFT;
+	u32 max_rate_scaled = lgc_max_rate << LGC_SHIFT;
 	if (rate > max_rate_scaled)
 		rate = max_rate_scaled;
 
@@ -222,34 +208,6 @@ static void lgc_update_rate(struct sock *sk)
 	 * as a temporary variable in prior operations.
 	 */
 	WRITE_ONCE(ca->rate, rate);
-}
-
-/* Calculate bdp based on min RTT and the estimated bottleneck bandwidth:
- *
- * bdp = ceil(bw * min_rtt * gain)
- *
- * The key factor, gain, controls the amount of queue. While a small gain
- * builds a smaller queue, it becomes more vulnerable to noise in RTT
- * measurements (e.g., delayed ACKs or other ACK compression effects). This
- * noise may cause LGC to under-estimate the rate.
- */
-static u32 lgc_bdp(struct sock *sk)
-{
-	unsigned int mss = tcp_sk(sk)->mss_cache;
-	struct lgc *ca = inet_csk_ca(sk);
-	u32 bdp;
-	u64 w;
-
-	w = (u64)ca->rate;
-	w *= ca->minRTT;
-	do_div(w, mss * USEC_PER_MSEC);
-
-	/* Remove the LGC_Shift, and round the value up
-	 * to avoid a negative feedback loop.
-	 */
-	bdp = (w + LGC_UNIT - 1) / LGC_UNIT;
-
-	return bdp;
 }
 
 static void tcp_lgc_main(struct sock *sk, const struct rate_sample *rs)
@@ -262,18 +220,21 @@ static void tcp_lgc_main(struct sock *sk, const struct rate_sample *rs)
 	if (!before(tp->snd_una, ca->next_seq)) {
 		if (unlikely(!ca->rate_eval)) {
 			/* Calculate the initial rate in bytes/msec */
-			u64 init_rate = (u64)tp->snd_cwnd * tp->mss_cache * USEC_PER_MSEC;
-			init_rate <<= LGC_SHIFT;
-			do_div(init_rate, ca->minRTT);
-
-			ca->rate = (u32)init_rate;
+			u32 init_rate = tp->snd_cwnd * tp->mss_cache * USEC_PER_MSEC;
+			ca->rate = init_rate / ca->minRTT;
+			ca->rate <<= LGC_SHIFT;
 			ca->rate_eval = 1;
 		}
 
 		lgc_update_rate(sk);
 
+		u64 target_cwnd = 1ULL;
+		target_cwnd *= ca->rate;
+		target_cwnd *= ca->minRTT;
+		target_cwnd >>= LGC_SHIFT;
+		do_div(target_cwnd, tp->mss_cache * USEC_PER_MSEC);
 
-		tp->snd_cwnd = max(lgc_bdp(sk), 2U);
+		tp->snd_cwnd = max((u32)target_cwnd + 3, 2U);
 
 		if (tp->snd_cwnd > tp->snd_cwnd_clamp)
 			tp->snd_cwnd = tp->snd_cwnd_clamp;
@@ -281,7 +242,7 @@ static void tcp_lgc_main(struct sock *sk, const struct rate_sample *rs)
 		lgc_reset(tp, ca);
 	}
 
-	//lgc_update_pacing_rate(sk);
+	lgc_update_pacing_rate(sk);
 }
 
 static size_t tcp_lgc_get_info(struct sock *sk, u32 ext, int *attr,
@@ -348,5 +309,5 @@ module_exit(lgc_unregister);
 MODULE_AUTHOR("Peyman Teymoori <peymant@ifi.uio.no>");
 MODULE_AUTHOR("Kr1stj0n C1k0 <kristjoc@ifi.uio.no>");
 MODULE_LICENSE("GPL");
-MODULE_VERSION("3.0");
+MODULE_VERSION("2.0");
 MODULE_DESCRIPTION("Logistic Growth Congestion Control (LGC)");
