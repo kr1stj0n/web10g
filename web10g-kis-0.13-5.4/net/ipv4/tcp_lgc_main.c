@@ -33,7 +33,7 @@
 
 #define LGC_SHIFT	16
 #define ONE		(1U<<16)
-#define THRESSH		((9U<<16)/10U)    /* ~0.9  */
+#define THRESSH		((8U<<16)/10U)    /* ~0.8  */
 #define FRAC_LIMIT	((99U<<16)/100U)  /* ~0.99 */
 
 struct lgc {
@@ -91,7 +91,7 @@ static void tcp_lgc_init(struct sock *sk)
                                         || (tp->ecn_flags & TCP_ECN_OK)) {
 		struct lgc *ca = inet_csk_ca(sk);
 
-		ca->rate_eval = 0U;
+		ca->rate_eval = 0;
 		ca->rate      = 1U;
 		ca->minRTT    = 1U<<20; /* reference RTT ~1s */
 		ca->fraction  = 0U;
@@ -107,14 +107,31 @@ static void tcp_lgc_init(struct sock *sk)
 	INET_ECN_dontxmit(sk);
 }
 
+/* Calculate the initial rate of the flow in bytes/mSec
+ * rate = cwnd * mss / rtt_ms
+ */
+static void lgc_init_rate(struct sock *sk)
+{
+	const struct tcp_sock *tp = tcp_sk(sk);
+	struct lgc *ca = inet_csk_ca(sk);
+
+	u64 init_rate = (u64)(tp->snd_cwnd * tp->mss_cache * USEC_PER_MSEC);
+	init_rate <<= LGC_SHIFT;
+	do_div(init_rate, ca->minRTT);
+
+	ca->rate = (u32)init_rate;
+
+	ca->rate_eval = 1;
+}
+
 static void lgc_update_pacing_rate(struct sock *sk)
 {
 	const struct tcp_sock *tp = tcp_sk(sk);
 	const struct lgc *ca = inet_csk_ca(sk);
 	u64 rate;
 
-	/* set sk_pacing_rate to 200 % of current rate (mss * cwnd / srtt) */
-	rate = (u64)tp->mss_cache * ((USEC_PER_SEC / 100) << 3);
+	/* set sk_pacing_rate to 100 % of current rate (mss * cwnd / rtt) */
+	rate = (u64)tp->mss_cache * ((USEC_PER_SEC / 100));
 
 	/* current rate is (cwnd * mss) / srtt
 	 * In Slow Start [1], set sk_pacing_rate to 200 % the current rate.
@@ -125,7 +142,7 @@ static void lgc_update_pacing_rate(struct sock *sk)
 	 *	 end of slow start and should slow down.
 	 */
 
-	rate *= 125U;
+	rate *= 100U;
 
 	rate *= max(tp->snd_cwnd, tp->packets_out);
 
@@ -210,6 +227,26 @@ static void lgc_update_rate(struct sock *sk)
 	WRITE_ONCE(ca->rate, rate);
 }
 
+/* Calculate cwnd based on current rate and minRTT
+ * cwnd = rate * rtt / mss
+ */
+static void lgc_set_cwnd(struct sock *sk)
+{
+	struct tcp_sock *tp = tcp_sk(sk);
+	struct lgc *ca = inet_csk_ca(sk);
+
+	u64 target_cwnd = 1ULL;
+	target_cwnd *= ca->rate;
+	target_cwnd *= ca->minRTT;
+	target_cwnd >>= LGC_SHIFT;
+	do_div(target_cwnd, tp->mss_cache * USEC_PER_MSEC);
+
+	tp->snd_cwnd = max((u32)target_cwnd + 1, 2U);
+
+	if (tp->snd_cwnd > tp->snd_cwnd_clamp)
+		tp->snd_cwnd = tp->snd_cwnd_clamp;
+}
+
 static void tcp_lgc_main(struct sock *sk, const struct rate_sample *rs)
 {
 	struct tcp_sock *tp = tcp_sk(sk);
@@ -218,26 +255,12 @@ static void tcp_lgc_main(struct sock *sk, const struct rate_sample *rs)
 
 	/* Expired RTT */
 	if (!before(tp->snd_una, ca->next_seq)) {
-		if (unlikely(!ca->rate_eval)) {
-			/* Calculate the initial rate in bytes/msec */
-			u32 init_rate = tp->snd_cwnd * tp->mss_cache * USEC_PER_MSEC;
-			ca->rate = init_rate / ca->minRTT;
-			ca->rate <<= LGC_SHIFT;
-			ca->rate_eval = 1;
-		}
+		if (unlikely(!ca->rate_eval))
+			lgc_init_rate(sk);
 
 		lgc_update_rate(sk);
 
-		u64 target_cwnd = 1ULL;
-		target_cwnd *= ca->rate;
-		target_cwnd *= ca->minRTT;
-		target_cwnd >>= LGC_SHIFT;
-		do_div(target_cwnd, tp->mss_cache * USEC_PER_MSEC);
-
-		tp->snd_cwnd = max((u32)target_cwnd + 3, 2U);
-
-		if (tp->snd_cwnd > tp->snd_cwnd_clamp)
-			tp->snd_cwnd = tp->snd_cwnd_clamp;
+		lgc_set_cwnd(sk);
 
 		lgc_reset(tp, ca);
 	}
