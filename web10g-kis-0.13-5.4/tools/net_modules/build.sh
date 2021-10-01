@@ -6,7 +6,7 @@
 
 build_stack() {
 
-    CMD="cd ../../ && make modules_prepare && make -j32 && sudo make -j32 modules_install && sudo make -j32 headers_install;
+    CMD="cd ../../ && make oldconfig && make modules_prepare && make -j32 && sudo make -j32 modules_install && sudo make -j32 headers_install;
          sudo depmod -a;
          sudo find /lib/modules/5.4.0/ -name *.ko -exec strip --strip-unneeded {} +;
          sudo rm -rf /boot/*5.4.0*;

@@ -377,6 +377,17 @@ config NET_SCH_SHQ
 
 	  If unsure, say N.
 
+config NET_SCH_HULL
+	tristate "HULL - Phantom Queue scheduler"
+	help
+	  Say Y here if you want to use the Phantom Queue packet scheduling algorithm.
+	  For more information, please see https://www.ifi.uio.no
+
+	  To compile this driver as a module, choose M here: the module
+	  will be called sch_shq.
+
+	  If unsure, say N.
+
 config NET_SCH_INGRESS
 	tristate "Ingress/classifier-action Qdisc"
 	depends on NET_CLS_ACT
