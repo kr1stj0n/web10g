@@ -40,6 +40,18 @@ build_modules() {
 
     #eval $CMD
 
+    # SCH_HULL
+    CMD="sudo rmmod -f sch_hull;
+         cp Makefile.hull ../../net/sched/Makefile;
+         cd ../../ && make modules_prepare && make M=net/sched/ clean && make M=net/sched/ modules && sudo make M=net/sched/ modules_install;
+         sudo depmod -a;
+         sudo cp /lib/modules/5.4.0/extra/sch_hull.ko /lib/modules/5.4.0/kernel/net/sched/;
+         sudo depmod -a;
+         cp tools/net_modules/Makefile.sched.init net/sched/Makefile;
+         sudo modprobe sch_hull"
+
+    #eval $CMD
+
     # TCP_LGC
     CMD="sudo rmmod -f tcp_lgc;
          cp Makefile.lgc ../../net/ipv4/Makefile;

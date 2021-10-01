@@ -231,7 +231,7 @@ static struct sk_buff *hull_dequeue(struct Qdisc *sch)
 		}
 
 		qdisc_watchdog_schedule_ns(&q->watchdog,
-					   now + max_t(long, -toks));
+					   now + max_t(long, -toks, 0));
 
 		/* Maybe we have a shorter packet in the queue,
 		   which can be sent now. It sounds cool,
@@ -278,7 +278,7 @@ static int hull_change(struct Qdisc *sch, struct nlattr *opt,
 	struct Qdisc *child = NULL;
 	struct psched_ratecfg rate;
 	u64 max_size; /* burst in Bytes */
-	s64 burst, mtu;
+	s64 burst;
 	u64 rate64 = 0;
 
 	err = nla_parse_nested_deprecated(tb, TCA_TBF_MAX, opt, hull_policy,
@@ -476,7 +476,6 @@ static struct Qdisc_ops hull_qdisc_ops __read_mostly = {
 	.destroy	=	hull_destroy,
 	.change		=	hull_change,
 	.dump		=	hull_dump,
-	.dump_stats	=	hull_dump_stats,
 	.owner		=	THIS_MODULE,
 };
 
