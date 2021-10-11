@@ -261,11 +261,11 @@ static void hull_reset(struct Qdisc *sch)
 	qdisc_watchdog_cancel(&q->watchdog);
 }
 
-static const struct nla_policy hull_policy[TCA_TBF_MAX + 1] = {
-	[TCA_TBF_PARMS]  = { .len = sizeof(struct tc_hull_qopt) },
-	[TCA_TBF_RTAB]   = { .type = NLA_BINARY, .len = TC_RTAB_SIZE },
-	[TCA_TBF_RATE64] = { .type = NLA_U64 },
-	[TCA_TBF_BURST]  = { .type = NLA_U32 },
+static const struct nla_policy hull_policy[TCA_HULL_MAX + 1] = {
+	[TCA_HULL_PARMS]  = { .len = sizeof(struct tc_hull_qopt) },
+	[TCA_HULL_RTAB]   = { .type = NLA_BINARY, .len = TC_RTAB_SIZE },
+	[TCA_HULL_RATE64] = { .type = NLA_U64 },
+	[TCA_HULL_BURST]  = { .type = NLA_U32 },
 };
 
 static int hull_change(struct Qdisc *sch, struct nlattr *opt,
@@ -273,7 +273,7 @@ static int hull_change(struct Qdisc *sch, struct nlattr *opt,
 {
 	int err;
 	struct hull_sched_data *q = qdisc_priv(sch);
-	struct nlattr *tb[TCA_TBF_MAX + 1];
+	struct nlattr *tb[TCA_HULL_MAX + 1];
 	struct tc_hull_qopt *qopt;
 	struct Qdisc *child = NULL;
 	struct psched_ratecfg rate;
@@ -281,29 +281,29 @@ static int hull_change(struct Qdisc *sch, struct nlattr *opt,
 	s64 burst;
 	u64 rate64 = 0;
 
-	err = nla_parse_nested_deprecated(tb, TCA_TBF_MAX, opt, hull_policy,
+	err = nla_parse_nested_deprecated(tb, TCA_HULL_MAX, opt, hull_policy,
 					  NULL);
 	if (err < 0)
 		return err;
 
 	err = -EINVAL;
-	if (tb[TCA_TBF_PARMS] == NULL)
+	if (tb[TCA_HULL_PARMS] == NULL)
 		goto done;
 
-	qopt = nla_data(tb[TCA_TBF_PARMS]);
+	qopt = nla_data(tb[TCA_HULL_PARMS]);
 	if (qopt->rate.linklayer == TC_LINKLAYER_UNAWARE)
 		qdisc_put_rtab(qdisc_get_rtab(&qopt->rate,
-					      tb[TCA_TBF_RTAB],
+					      tb[TCA_HULL_RTAB],
 					      NULL));
 
 	burst = min_t(u64, PSCHED_TICKS2NS(qopt->burst), ~0U);
 
-	if (tb[TCA_TBF_RATE64])
-		rate64 = nla_get_u64(tb[TCA_TBF_RATE64]);
+	if (tb[TCA_HULL_RATE64])
+		rate64 = nla_get_u64(tb[TCA_HULL_RATE64]);
 	psched_ratecfg_precompute(&rate, &qopt->rate, rate64);
 
-	if (tb[TCA_TBF_BURST]) {
-		max_size = nla_get_u32(tb[TCA_TBF_BURST]);
+	if (tb[TCA_HULL_BURST]) {
+		max_size = nla_get_u32(tb[TCA_HULL_BURST]);
 		burst = psched_l2t_ns(&rate, max_size);
 	} else {
 		max_size = min_t(u64, psched_ns_t2l(&rate, burst), ~0U);
@@ -343,7 +343,7 @@ static int hull_change(struct Qdisc *sch, struct nlattr *opt,
 	}
 	q->limit = qopt->limit;
 	q->max_size = max_size;
-	if (tb[TCA_TBF_BURST])
+	if (tb[TCA_HULL_BURST])
 		q->burst = burst;
 	else
 		q->burst = PSCHED_TICKS2NS(qopt->burst);
@@ -395,11 +395,11 @@ static int hull_dump(struct Qdisc *sch, struct sk_buff *skb)
 	opt.limit = q->limit;
 	psched_ratecfg_getrate(&opt.rate, &q->rate);
 	opt.burst = PSCHED_NS2TICKS(q->burst);
-	if (nla_put(skb, TCA_TBF_PARMS, sizeof(opt), &opt))
+	if (nla_put(skb, TCA_HULL_PARMS, sizeof(opt), &opt))
 		goto nla_put_failure;
 	if (q->rate.rate_bytes_ps >= (1ULL << 32) &&
-	    nla_put_u64_64bit(skb, TCA_TBF_RATE64, q->rate.rate_bytes_ps,
-			      TCA_TBF_PAD))
+	    nla_put_u64_64bit(skb, TCA_HULL_RATE64, q->rate.rate_bytes_ps,
+			      TCA_HULL_PAD))
 		goto nla_put_failure;
 
 	return nla_nest_end(skb, nest);

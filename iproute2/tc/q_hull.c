@@ -33,7 +33,6 @@ static void explain1(const char *arg, const char *val)
 	fprintf(stderr, "hull: illegal value for \"%s\": \"%s\"\n", arg, val);
 }
 
-
 static int hull_parse_opt(struct qdisc_util *qu, int argc, char **argv,
 			  struct nlmsghdr *n, const char *dev)
 {
@@ -43,7 +42,7 @@ static int hull_parse_opt(struct qdisc_util *qu, int argc, char **argv,
 	unsigned burst = 0, mtu = 1500, mpu = 0;
 	int Rcell_log =  -1;
 	unsigned short overhead = 0;
-	unsigned int linklayer = LINKLAYER_ETHERNET; /* Assume ethernet */
+	unsigned int linklayer = LINKLAYER_ETHERNET;	/* Assume ethernet */
 	struct rtattr *tail;
 	__u64 rate64 = 0;
 
