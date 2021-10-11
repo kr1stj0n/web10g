@@ -178,11 +178,15 @@ static int hull_print_opt(struct qdisc_util *qu, FILE *f, struct rtattr *opt)
 	qopt = RTA_DATA(tb[TCA_HULL_PARMS]);
 	if (RTA_PAYLOAD(tb[TCA_HULL_PARMS])  < sizeof(*qopt))
 		return -1;
+
+	fprintf(f, "limit %s ", sprint_size(qopt->limit, b1));
+
 	rate64 = qopt->rate.rate;
 	if (tb[TCA_HULL_RATE64] &&
 	    RTA_PAYLOAD(tb[TCA_HULL_RATE64]) >= sizeof(rate64))
 		rate64 = rta_getattr_u64(tb[TCA_HULL_RATE64]);
 	fprintf(f, "rate %s ", sprint_rate(rate64, b1));
+
 	burst = tc_calc_xmitsize(rate64, qopt->burst);
 	if (show_details) {
 		fprintf(f, "burst %s/%u mpu %s ", sprint_size(burst, b1),
