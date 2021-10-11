@@ -202,6 +202,36 @@ enum {
 
 #define TCA_TBF_MAX (__TCA_TBF_MAX - 1)
 
+/* HULL section */
+
+struct tc_hull_qopt {
+	struct tc_ratespec rate;
+	__u32		limit;
+	__u32		burst;
+	__u32		markth;
+};
+
+enum {
+	TCA_HULL_UNSPEC,
+	TCA_HULL_PARMS,
+	TCA_HULL_RTAB,
+	TCA_HULL_RATE64,
+	TCA_HULL_BURST,
+	TCA_HULL_PAD,
+	__TCA_HULL_MAX,
+};
+
+#define TCA_HULL_MAX (__TCA_HULL_MAX - 1)
+
+struct tc_hull_xstats {
+	__u32 avg_rate;         /* current average dq_rate */
+	__u64 qdelay;           /* current queuing delay */
+	__u32 packets_in;       /* total number of packets enqueued */
+	__u32 dropped;          /* packets dropped due to hull_action */
+	__u32 overlimit;        /* dropped due to full queue */
+	__u16 maxq;             /* maximum queue size */
+	__u32 ecn_mark;         /* packets marked with ecn*/
+};
 
 /* TEQL section */
 

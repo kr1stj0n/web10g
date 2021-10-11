@@ -91,6 +91,17 @@
 	changed the limit is not effective anymore.
 */
 
+/* statistics gathering */
+struct hull_stats {
+	u32 avg_rate;		/* current average rate */
+	u64 qdelay;		/* current queuing delay */
+	u32 packets_in;		/* total number of packets enqueued */
+	u32 dropped;		/* packets dropped due to shq_action */
+	u32 overlimit;		/* dropped due to lack of space in queue */
+	u16 maxq;		/* maximum queue size ever seen */
+	u32 ecn_mark;		/* packets marked with ECN */
+};
+
 struct hull_sched_data {
 /* Parameters */
 	u32		limit;		/* Maximal length of backlog: bytes */
@@ -102,6 +113,7 @@ struct hull_sched_data {
 /* Variables */
 	s64	tokens;			/* Current number of B tokens */
 	s64	t_c;			/* Time check-point */
+	struct hull_stats stats;
 	struct Qdisc	*qdisc;		/* Inner qdisc, default - bfifo queue */
 	struct qdisc_watchdog watchdog;	/* Watchdog timer */
 };
@@ -409,6 +421,23 @@ nla_put_failure:
 	return -1;
 }
 
+static int hull_dump_stats(struct Qdisc *sch, struct gnet_dump *d)
+{
+	struct hull_sched_data *q = qdisc_priv(sch);
+	struct tc_hull_xstats st = {
+		/* TODO: unscale and return avg_rate in bytes per sec */
+		.avg_rate	= q->stats.avg_rate,
+		.qdelay         = q->stats.qdelay,
+		.packets_in	= q->stats.packets_in,
+		.dropped	= q->stats.dropped,
+		.overlimit	= q->stats.overlimit,
+		.maxq		= q->stats.maxq,
+		.ecn_mark	= q->stats.ecn_mark,
+	};
+
+	return gnet_stats_copy_app(d, &st, sizeof(st));
+}
+
 static int hull_dump_class(struct Qdisc *sch, unsigned long cl,
 			   struct sk_buff *skb, struct tcmsg *tcm)
 {
@@ -476,6 +505,7 @@ static struct Qdisc_ops hull_qdisc_ops __read_mostly = {
 	.destroy	=	hull_destroy,
 	.change		=	hull_change,
 	.dump		=	hull_dump,
+	.dump_stats	=	hull_dump_stats,
 	.owner		=	THIS_MODULE,
 };
 

@@ -210,8 +210,37 @@ static int hull_print_opt(struct qdisc_util *qu, FILE *f, struct rtattr *opt)
 	return 0;
 }
 
+static int hull_print_xstats(struct qdisc_util *qu, FILE *f,
+			     struct rtattr *xstats)
+{
+	struct tc_hull_xstats *st;
+
+	if (xstats == NULL)
+		return 0;
+
+	if (RTA_PAYLOAD(xstats) < sizeof(*st))
+		return -1;
+
+	st = RTA_DATA(xstats);
+
+	if (st->avg_rate)
+		print_uint(PRINT_ANY, "avg_rate", " avg_rate %u", st->avg_rate);
+
+	fprintf(f, " delay %lluus ", (unsigned long long) st->qdelay);
+
+	print_nl();
+	print_uint(PRINT_ANY, "packets_in", " packets_in %u", st->packets_in);
+	print_uint(PRINT_ANY, "dropped", " dropped %u", st->dropped);
+        print_uint(PRINT_ANY, "overlimit", " overlimit %u", st->overlimit);
+	print_uint(PRINT_ANY, "maxq", " maxq %hu", st->maxq);
+	print_uint(PRINT_ANY, "ecn_mark", " ecn_mark %u", st->ecn_mark);
+
+	return 0;
+}
+
 struct qdisc_util hull_qdisc_util = {
 	.id		= "hull",
 	.parse_qopt	= hull_parse_opt,
 	.print_qopt	= hull_print_opt,
+	.print_xstats	= hull_print_xstats,
 };
