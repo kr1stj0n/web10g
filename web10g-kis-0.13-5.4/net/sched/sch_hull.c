@@ -96,7 +96,7 @@ struct hull_stats {
 	u32 avg_rate;		/* current average rate */
 	u64 qdelay;		/* current queuing delay */
 	u32 packets_in;		/* total number of packets enqueued */
-	u32 dropped;		/* packets dropped due to shq_action */
+	u32 dropped;		/* packets dropped due to hull_action */
 	u32 overlimit;		/* dropped due to lack of space in queue */
 	u16 maxq;		/* maximum queue size ever seen */
 	u32 ecn_mark;		/* packets marked with ECN */
@@ -113,7 +113,8 @@ struct hull_sched_data {
 /* Variables */
 	s64	tokens;			/* Current number of B tokens */
 	s64	t_c;			/* Time check-point */
-	struct hull_stats stats;
+	u32	counter;		/* PQ counter */
+	struct hull_stats stats;	/* HULL statistics */
 	struct Qdisc	*qdisc;		/* Inner qdisc, default - bfifo queue */
 	struct qdisc_watchdog watchdog;	/* Watchdog timer */
 };
@@ -185,7 +186,7 @@ static int hull_segment(struct sk_buff *skb, struct Qdisc *sch,
 }
 
 static int hull_enqueue(struct sk_buff *skb, struct Qdisc *sch,
-		       struct sk_buff **to_free)
+		        struct sk_buff **to_free)
 {
 	struct hull_sched_data *q = qdisc_priv(sch);
 	unsigned int len = qdisc_pkt_len(skb);
@@ -197,6 +198,19 @@ static int hull_enqueue(struct sk_buff *skb, struct Qdisc *sch,
 			return hull_segment(skb, sch, to_free);
 		return qdisc_drop(skb, sch, to_free);
 	}
+
+	/* Timestamp the packet in order to calculate
+	 * * the queuing delay in the dequeue process.
+	 * */
+	__net_timestamp(skb);
+
+	if (q->counter + len > q->markth) {
+		if (INET_ECN_set_ce(skb)) {
+			/* If packet is ecn capable, mark it with a prob. */
+			q->stats.ecn_mark++;
+		}
+	}
+
 	ret = qdisc_enqueue(skb, q->qdisc, to_free);
 	if (ret != NET_XMIT_SUCCESS) {
 		if (net_xmit_drop_count(ret))
@@ -206,6 +220,8 @@ static int hull_enqueue(struct sk_buff *skb, struct Qdisc *sch,
 
 	sch->qstats.backlog += len;
 	sch->q.qlen++;
+	q->counter += len;
+	q->stats.packets_in++;
 	return NET_XMIT_SUCCESS;
 }
 
@@ -213,6 +229,7 @@ static struct sk_buff *hull_dequeue(struct Qdisc *sch)
 {
 	struct hull_sched_data *q = qdisc_priv(sch);
 	struct sk_buff *skb;
+	u64 qdelay = 0ULL;
 
 	skb = q->qdisc->ops->peek(q->qdisc);
 
@@ -237,8 +254,14 @@ static struct sk_buff *hull_dequeue(struct Qdisc *sch)
 			q->t_c = now;
 			q->tokens = toks;
 			qdisc_qstats_backlog_dec(sch, skb);
+			q->counter -= qdisc_pkt_len(skb);
 			sch->q.qlen--;
 			qdisc_bstats_update(sch, skb);
+			/* >> 10 is approx /1000 */
+			qdelay = ((__force __u64)(ktime_get_real_ns() -
+					ktime_to_ns(skb_get_ktime(skb)))) >> 10;
+			q->stats.qdelay = qdelay;
+
 			return skb;
 		}
 
@@ -268,6 +291,7 @@ static void hull_reset(struct Qdisc *sch)
 	qdisc_reset(q->qdisc);
 	sch->qstats.backlog = 0;
 	sch->q.qlen = 0;
+	q->counter = 0;
 	q->t_c = ktime_get_ns();
 	q->tokens = q->burst;
 	qdisc_watchdog_cancel(&q->watchdog);
@@ -380,6 +404,7 @@ static int hull_init(struct Qdisc *sch, struct nlattr *opt,
 	if (!opt)
 		return -EINVAL;
 
+	q->counter = 0;
 	q->t_c = ktime_get_ns();
 
 	return hull_change(sch, opt, extack);
