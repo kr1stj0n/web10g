@@ -200,8 +200,8 @@ static int hull_print_opt(struct qdisc_util *qu, FILE *f, struct rtattr *opt)
 	latency = TIME_UNITS_PER_SEC*(qopt->limit/(double)rate64) - tc_core_tick2time(qopt->burst);
 	if (latency >= 0.0)
 		fprintf(f, "latency %s ", sprint_time(latency, b1));
-	if (show_raw || latency < 0.0)
-		fprintf(f, "limit %s ", sprint_size(qopt->limit, b1));
+
+	fprintf(f, "markth %s ", sprint_size(qopt->markth, b1));
 
 	if (qopt->rate.overhead) {
 		fprintf(f, "overhead %d", qopt->rate.overhead);

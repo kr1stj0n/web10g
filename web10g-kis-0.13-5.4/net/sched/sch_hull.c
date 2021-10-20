@@ -14,7 +14,9 @@
 #include <net/netlink.h>
 #include <net/sch_generic.h>
 #include <net/pkt_sched.h>
+#include <net/inet_ecn.h>
 
+#define HULL_SCALE 8
 
 /*	Simple Token Bucket Filter.
 	=======================================
@@ -104,21 +106,21 @@ struct hull_stats {
 
 struct hull_sched_data {
 /* Parameters */
-	u32		limit;		/* Maximal length of backlog: bytes */
-	u32		max_size;	/* Burst in Bytes */
-	s64		burst;		/* Token bucket depth/rate: MUST BE >= MTU/B */
-	u32		markth;		/* ECN marking threshold */
-	struct psched_ratecfg rate;
+	u32	limit;		/* Maximal length of backlog: bytes */
+	u32	max_size;	/* Burst in Bytes */
+	s64	burst;		/* Token bucket depth/rate: MUST BE >= MTU/B */
+	u32	markth;		/* ECN marking threshold */
+	struct	psched_ratecfg rate;
 
 /* Variables */
 	s64	tokens;			/* Current number of B tokens */
 	s64	t_c;			/* Time check-point */
 	u32	counter;		/* PQ counter */
+	u32	avg_rate;		/* bytes per pschedtime tick,scaled */
 	struct hull_stats stats;	/* HULL statistics */
 	struct Qdisc	*qdisc;		/* Inner qdisc, default - bfifo queue */
 	struct qdisc_watchdog watchdog;	/* Watchdog timer */
 };
-
 
 /* Time to Length, convert time in ns to length in bytes
  * to determinate how many bytes can be sent in given time.
@@ -220,6 +222,8 @@ static int hull_enqueue(struct sk_buff *skb, struct Qdisc *sch,
 
 	sch->qstats.backlog += len;
 	sch->q.qlen++;
+	if (qdisc_qlen(sch) > q->stats.maxq)
+		q->stats.maxq = qdisc_qlen(sch);
 	q->counter += len;
 	q->stats.packets_in++;
 	return NET_XMIT_SUCCESS;
@@ -387,6 +391,8 @@ static int hull_change(struct Qdisc *sch, struct nlattr *opt,
 
 	memcpy(&q->rate, &rate, sizeof(struct psched_ratecfg));
 
+	q->markth = qopt->markth;
+
 	sch_tree_unlock(sch);
 	err = 0;
 done:
@@ -405,6 +411,7 @@ static int hull_init(struct Qdisc *sch, struct nlattr *opt,
 		return -EINVAL;
 
 	q->counter = 0;
+	q->avg_rate = 0;
 	q->t_c = ktime_get_ns();
 
 	return hull_change(sch, opt, extack);
@@ -432,6 +439,7 @@ static int hull_dump(struct Qdisc *sch, struct sk_buff *skb)
 	opt.limit = q->limit;
 	psched_ratecfg_getrate(&opt.rate, &q->rate);
 	opt.burst = PSCHED_NS2TICKS(q->burst);
+	opt.markth = q->markth;
 	if (nla_put(skb, TCA_HULL_PARMS, sizeof(opt), &opt))
 		goto nla_put_failure;
 	if (q->rate.rate_bytes_ps >= (1ULL << 32) &&
@@ -450,8 +458,9 @@ static int hull_dump_stats(struct Qdisc *sch, struct gnet_dump *d)
 {
 	struct hull_sched_data *q = qdisc_priv(sch);
 	struct tc_hull_xstats st = {
-		/* TODO: unscale and return avg_rate in bytes per sec */
-		.avg_rate	= q->stats.avg_rate,
+		/* unscale and return dq_rate in bytes per sec */
+		.avg_rate	= q->avg_rate *
+					(PSCHED_TICKS_PER_SEC) >> HULL_SCALE,
 		.qdelay         = q->stats.qdelay,
 		.packets_in	= q->stats.packets_in,
 		.dropped	= q->stats.dropped,
