@@ -39,7 +39,7 @@ static int hull_parse_opt(struct qdisc_util *qu, int argc, char **argv,
                          struct nlmsghdr *n, const char *dev)
 {
 	unsigned int limit = 1500000;		/* default: 1000p */
-	unsigned int drain_rate = 12500000;	/* default: 100mbit in bps */
+	unsigned int drate = 12500000;		/* default: 100mbit in bps */
 	unsigned int markth = 1500;		/* default: 1p */
 	struct rtattr *tail;
 
@@ -102,8 +102,6 @@ static int hull_print_opt(struct qdisc_util *qu, FILE *f, struct rtattr *opt)
 	unsigned int limit;
 	unsigned int drate;
 	unsigned int markth;
-
-	SPRINT_BUF(b1);
 
 	if (opt == NULL)
 		return 0;
