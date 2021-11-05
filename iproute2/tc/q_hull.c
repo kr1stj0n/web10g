@@ -1,12 +1,18 @@
-/*
- * q_hull.c		HULL - Phantom queue
+/* Copyright (C) 2013 Cisco Systems, Inc, 2013.
  *
- *		This program is free software; you can redistribute it and/or
- *		modify it under the terms of the GNU General Public License
- *		as published by the Free Software Foundation; either version
- *		2 of the License, or (at your option) any later version.
+ * This program is free software; you can redistribute it and/or
+ * modify it under the terms of the GNU General Public License
+ * as published by the Free Software Foundation; either version 2
+ * of the License.
  *
- * Authors:	Kristjon Ciko
+ * This program is distributed in the hope that it will be useful,
+ * but WITHOUT ANY WARRANTY; without even the implied warranty of
+ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+ * GNU General Public License for more details.
+ *
+ * Author: Vijay Subramanian <vijaynsu@cisco.com>
+ * Author: Mythili Prabhu <mysuryan@cisco.com>
+ * Adapted for HULL by: Kr1stj0n C1k0 <kristjoc@ifi.uio.no>
  *
  */
 
@@ -18,6 +24,7 @@
 #include <netinet/in.h>
 #include <arpa/inet.h>
 #include <string.h>
+#include <math.h>
 
 #include "utils.h"
 #include "tc_util.h"
@@ -25,193 +32,105 @@
 static void explain(void)
 {
 	fprintf(stderr,
-		"Usage: hull limit BYTES rate BPS burst BYTES markth BYTES\n");
-}
-
-static void explain1(const char *arg, const char *val)
-{
-	fprintf(stderr, "hull: illegal value for \"%s\": \"%s\"\n", arg, val);
+		"Usage: ... hull limit BYTES drate BPS markth BYTES\n");
 }
 
 static int hull_parse_opt(struct qdisc_util *qu, int argc, char **argv,
-			  struct nlmsghdr *n, const char *dev)
+                         struct nlmsghdr *n, const char *dev)
 {
-        int ok = 0;
-	struct tc_hull_qopt opt = {};
-        __u32 rtab[256];
-	unsigned burst = 0, mtu = 1500, mpu = 0;
-	int Rcell_log =  -1;
-	unsigned short overhead = 0;
-	unsigned int linklayer = LINKLAYER_ETHERNET;	/* Assume ethernet */
+	unsigned int limit = 1500000;		/* default: 1000p */
+	unsigned int drain_rate = 12500000;	/* default: 100mbit in bps */
+	unsigned int markth = 1500;		/* default: 1p */
 	struct rtattr *tail;
-	__u64 rate64 = 0;
 
 	while (argc > 0) {
-		if (matches(*argv, "limit") == 0) {
+		if (strcmp(*argv, "limit") == 0) {
 			NEXT_ARG();
-			if (opt.limit) {
-				fprintf(stderr, "hull: duplicate \"limit\" specification\n");
+			if (get_unsigned(&limit, *argv, 0)) {
+				fprintf(stderr, "Illegal \"limit\"\n");
 				return -1;
 			}
-			if (get_size(&opt.limit, *argv)) {
-				explain1("limit", *argv);
-				return -1;
-			}
-			ok++;
-                } else if (strcmp(*argv, "rate") == 0) {
+		} else if (strcmp(*argv, "drate") == 0) {
 			NEXT_ARG();
-			if (rate64) {
-				fprintf(stderr, "hull: duplicate \"rate\" specification\n");
-				return -1;
-			}
 			if (strchr(*argv, '%')) {
-				if (get_percent_rate64(&rate64, *argv, dev)) {
-					explain1("rate", *argv);
+				if (get_percent_rate(&drate, *argv, dev)) {
+					fprintf(stderr,
+                                                "Illegal \"drate\"\n");
 					return -1;
 				}
-			} else if (get_rate64(&rate64, *argv)) {
-				explain1("rate", *argv);
+			} else if (get_rate(&drate, *argv)) {
+				fprintf(stderr, "Illegal \"drate\"\n");
 				return -1;
 			}
-			ok++;
-		} else if (matches(*argv, "markth") == 0) {
+		} else if (strcmp(*argv, "markth") == 0) {
 			NEXT_ARG();
-			if (opt.markth) {
-				fprintf(stderr, "hull: duplicate \"markth\" specification\n");
+			if (get_unsigned(&markth, *argv, 0)) {
+				fprintf(stderr, "Illegal \"markth\"\n");
 				return -1;
 			}
-			if (get_size(&opt.markth, *argv)) {
-				explain1("markth", *argv);
-				return -1;
-			}
-			ok++;
-		} else if (matches(*argv, "burst") == 0) {
-			const char *parm_name = *argv;
-
-			NEXT_ARG();
-			if (burst) {
-				fprintf(stderr, "hull: duplicate \"burst\" specification\n");
-				return -1;
-			}
-			if (get_size_and_cell(&burst, &Rcell_log, *argv) < 0) {
-				explain1(parm_name, *argv);
-				return -1;
-			}
-			ok++;
-		}  else if (strcmp(*argv, "help") == 0) {
+		} else if (strcmp(*argv, "help") == 0) {
 			explain();
 			return -1;
 		} else {
-			fprintf(stderr, "hull: unknown parameter \"%s\"\n", *argv);
+			fprintf(stderr, "What is \"%s\"?\n", *argv);
 			explain();
 			return -1;
 		}
-		argc--; argv++;
+		argc--;
+		argv++;
 	}
-
-	int verdict = 0;
-
-	/* Be nice to the user: try to emit all error messages in
-	 * one go rather than reveal one more problem when a
-	 * previous one has been fixed.
-	 */
-        if (opt.limit == 0) {
-            fprintf(stderr, "hull: \"limit\" is required.\n");
-            verdict = -1;
-        }
-	if (rate64 == 0) {
-		fprintf(stderr, "hull: the \"rate\" parameter is mandatory.\n");
-		verdict = -1;
-	}
-	if (!burst) {
-		fprintf(stderr, "hull: the \"burst\" parameter is mandatory.\n");
-		verdict = -1;
-	}
-	if (!opt.markth) {
-		fprintf(stderr, "hull: the \"markth\" parameter is mandatory.\n");
-		verdict = -1;
-	}
-	if (verdict != 0) {
-		explain();
-		return verdict;
-	}
-
-	opt.rate.rate = (rate64 >= (1ULL << 32)) ? ~0U : rate64;
-
-	opt.rate.mpu = mpu;
-	opt.rate.overhead = overhead;
-	if (tc_calc_rtable(&opt.rate, rtab, Rcell_log, mtu, linklayer) < 0) {
-		fprintf(stderr, "hull: failed to calculate rate table.\n");
-		return -1;
-	}
-	opt.burst = tc_calc_xmittime(opt.rate.rate, burst);
 
 	tail = addattr_nest(n, 1024, TCA_OPTIONS);
-	addattr_l(n, 2024, TCA_HULL_PARMS, &opt, sizeof(opt));
-	addattr_l(n, 2124, TCA_HULL_BURST, &burst, sizeof(burst));
-	if (rate64 >= (1ULL << 32))
-		addattr_l(n, 2124, TCA_HULL_RATE64, &rate64, sizeof(rate64));
-	addattr_l(n, 3024, TCA_HULL_RTAB, rtab, 1024);
+	if (limit)
+		addattr_l(n, 1024, TCA_HULL_LIMIT, &limit, sizeof(limit));
+	if (!drate) {
+		get_rate(&drate, "100Mbit");
+		/* fprintf(stderr, "HULL: set bandwidth to 100Mbit\n"); */
+	}
+        if (drate)
+                addattr_l(n, 1024, TCA_HULL_DRATE, &drate, sizeof(drate));
+	if (markth)
+		addattr_l(n, 1024, TCA_HULL_MARKTH, &markth, sizeof(markth));
 	addattr_nest_end(n, tail);
+
 	return 0;
 }
 
 static int hull_print_opt(struct qdisc_util *qu, FILE *f, struct rtattr *opt)
 {
-	struct rtattr *tb[TCA_TBF_MAX+1];
-	struct tc_hull_qopt *qopt;
-	double burst;
-	double latency;
-	__u64 rate64 = 0;
+	struct rtattr *tb[TCA_HULL_MAX + 1];
+	unsigned int limit;
+	unsigned int drate;
+	unsigned int markth;
 
 	SPRINT_BUF(b1);
-	SPRINT_BUF(b2);
 
 	if (opt == NULL)
 		return 0;
 
 	parse_rtattr_nested(tb, TCA_HULL_MAX, opt);
 
-	if (tb[TCA_HULL_PARMS] == NULL)
-		return -1;
-
-	qopt = RTA_DATA(tb[TCA_HULL_PARMS]);
-	if (RTA_PAYLOAD(tb[TCA_HULL_PARMS])  < sizeof(*qopt))
-		return -1;
-
-	fprintf(f, "limit %s ", sprint_size(qopt->limit, b1));
-
-	rate64 = qopt->rate.rate;
-	if (tb[TCA_HULL_RATE64] &&
-	    RTA_PAYLOAD(tb[TCA_HULL_RATE64]) >= sizeof(rate64))
-		rate64 = rta_getattr_u64(tb[TCA_HULL_RATE64]);
-	fprintf(f, "rate %s ", sprint_rate(rate64, b1));
-
-	burst = tc_calc_xmitsize(rate64, qopt->burst);
-	if (show_details) {
-		fprintf(f, "burst %s/%u mpu %s ", sprint_size(burst, b1),
-			1<<qopt->rate.cell_log, sprint_size(qopt->rate.mpu, b2));
-	} else {
-		fprintf(f, "burst %s ", sprint_size(burst, b1));
+	if (tb[TCA_HULL_LIMIT] &&
+            RTA_PAYLOAD(tb[TCA_HULL_LIMIT]) >= sizeof(__u32)) {
+		limit = rta_getattr_u32(tb[TCA_HULL_LIMIT]);
+		print_uint(PRINT_ANY, "limit", "limit %up ", limit);
 	}
-	if (show_raw)
-		fprintf(f, "[%08x] ", qopt->burst);
-
-	latency = TIME_UNITS_PER_SEC*(qopt->limit/(double)rate64) - tc_core_tick2time(qopt->burst);
-	if (latency >= 0.0)
-		fprintf(f, "latency %s ", sprint_time(latency, b1));
-
-	fprintf(f, "markth %s ", sprint_size(qopt->markth, b1));
-
-	if (qopt->rate.overhead) {
-		fprintf(f, "overhead %d", qopt->rate.overhead);
+	if (tb[TCA_HULL_DRATE] &&
+            RTA_PAYLOAD(tb[TCA_HULL_DRATE]) >= sizeof(__u32)) {
+		drate = rta_getattr_u32(tb[TCA_HULL_DRATE]);
+		print_uint(PRINT_ANY, "drate", "drate %u ", drate);
+	}
+	if (tb[TCA_HULL_MARKTH] &&
+            RTA_PAYLOAD(tb[TCA_HULL_MARKTH]) >= sizeof(__u32)) {
+		markth = rta_getattr_u32(tb[TCA_HULL_MARKTH]);
+		print_uint(PRINT_ANY, "markth", "markth %up ", markth);
 	}
 
 	return 0;
 }
 
 static int hull_print_xstats(struct qdisc_util *qu, FILE *f,
-			     struct rtattr *xstats)
+                            struct rtattr *xstats)
 {
 	struct tc_hull_xstats *st;
 
@@ -226,7 +145,8 @@ static int hull_print_xstats(struct qdisc_util *qu, FILE *f,
 	if (st->avg_rate)
 		print_uint(PRINT_ANY, "avg_rate", " avg_rate %u", st->avg_rate);
 
-	fprintf(f, " delay %lluus ", (unsigned long long) st->qdelay);
+	fprintf(f, " delay %lluus", (unsigned long long) st->qdelay);
+
 
 	print_nl();
 	print_uint(PRINT_ANY, "packets_in", " packets_in %u", st->packets_in);
@@ -236,6 +156,7 @@ static int hull_print_xstats(struct qdisc_util *qu, FILE *f,
 	print_uint(PRINT_ANY, "ecn_mark", " ecn_mark %u", st->ecn_mark);
 
 	return 0;
+
 }
 
 struct qdisc_util hull_qdisc_util = {

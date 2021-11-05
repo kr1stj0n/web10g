@@ -205,19 +205,16 @@ enum {
 /* HULL section */
 
 struct tc_hull_qopt {
-	struct tc_ratespec rate;
-	__u32		limit;
-	__u32		burst;
-	__u32		markth;
+	__u32 limit;
+	__u32 drate;
+	__u32 markth;
 };
 
 enum {
 	TCA_HULL_UNSPEC,
-	TCA_HULL_PARMS,
-	TCA_HULL_RTAB,
-	TCA_HULL_RATE64,
-	TCA_HULL_BURST,
-	TCA_HULL_PAD,
+	TCA_HULL_LIMIT,
+	TCA_HULL_DRATE,
+	TCA_HULL_MARKTH,
 	__TCA_HULL_MAX,
 };
 
