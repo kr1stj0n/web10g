@@ -46,7 +46,7 @@ static int hull_parse_opt(struct qdisc_util *qu, int argc, char **argv,
 	while (argc > 0) {
 		if (strcmp(*argv, "limit") == 0) {
 			NEXT_ARG();
-			if (get_unsigned(&limit, *argv, 0)) {
+			if (get_size(&limit, *argv)) {
 				fprintf(stderr, "Illegal \"limit\"\n");
 				return -1;
 			}
@@ -64,7 +64,7 @@ static int hull_parse_opt(struct qdisc_util *qu, int argc, char **argv,
 			}
 		} else if (strcmp(*argv, "markth") == 0) {
 			NEXT_ARG();
-			if (get_unsigned(&markth, *argv, 0)) {
+			if (get_size(&markth, *argv)) {
 				fprintf(stderr, "Illegal \"markth\"\n");
 				return -1;
 			}
@@ -102,6 +102,7 @@ static int hull_print_opt(struct qdisc_util *qu, FILE *f, struct rtattr *opt)
 	unsigned int limit;
 	unsigned int drate;
 	unsigned int markth;
+	SPRINT_BUF(b1);
 
 	if (opt == NULL)
 		return 0;
@@ -111,17 +112,17 @@ static int hull_print_opt(struct qdisc_util *qu, FILE *f, struct rtattr *opt)
 	if (tb[TCA_HULL_LIMIT] &&
             RTA_PAYLOAD(tb[TCA_HULL_LIMIT]) >= sizeof(__u32)) {
 		limit = rta_getattr_u32(tb[TCA_HULL_LIMIT]);
-		print_uint(PRINT_ANY, "limit", "limit %up ", limit);
+		fprintf(f, "limit %s ", sprint_size(limit, b1));
 	}
 	if (tb[TCA_HULL_DRATE] &&
             RTA_PAYLOAD(tb[TCA_HULL_DRATE]) >= sizeof(__u32)) {
 		drate = rta_getattr_u32(tb[TCA_HULL_DRATE]);
-		print_uint(PRINT_ANY, "drate", "drate %u ", drate);
+		fprintf(f, "drate %s ", sprint_size(drate, b1));
 	}
 	if (tb[TCA_HULL_MARKTH] &&
             RTA_PAYLOAD(tb[TCA_HULL_MARKTH]) >= sizeof(__u32)) {
 		markth = rta_getattr_u32(tb[TCA_HULL_MARKTH]);
-		print_uint(PRINT_ANY, "markth", "markth %up ", markth);
+		fprintf(f, "markth %s ", sprint_size(markth, b1));
 	}
 
 	return 0;

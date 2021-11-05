@@ -128,7 +128,7 @@ static int hull_change(struct Qdisc *sch, struct nlattr *opt,
 {
 	struct hull_sched_data *q = qdisc_priv(sch);
 	struct nlattr *tb[TCA_HULL_MAX + 1];
-	u32 qlen, us, dropped = 0U;
+	u32 qlen, dropped = 0U;
 	int err;
 
 	if (!opt)
@@ -218,8 +218,7 @@ static int hull_dump_stats(struct Qdisc *sch, struct gnet_dump *d)
 	struct hull_sched_data *q = qdisc_priv(sch);
 	struct tc_hull_xstats st = {
 		.qdelay         = q->stats.qdelay,
-		/* TODO: unscale and return avg_rate in bytes per sec */
-		.avg_rate	= q->vars.avg_rate,
+		.avg_rate	= q->stats.avg_rate,
 		.packets_in	= q->stats.packets_in,
 		.dropped	= q->stats.dropped,
 		.overlimit	= q->stats.overlimit,
