@@ -227,7 +227,7 @@ static struct sk_buff *hull_dequeue(struct Qdisc *sch)
 
 		unsigned int len = qdisc_pkt_len(skb);
 
-		now = get_ktime_ns();
+		now = ktime_get_ns();
 		delta = now - q->t_c;
 
 		if (delta >= q->freq) {
@@ -300,7 +300,7 @@ static int hull_change(struct Qdisc *sch, struct nlattr *opt,
 	q->markth = qopt->markth;
 
 	if (tb[TCA_HULL_DRATE])
-		drate = nla_get_u64(tb[TCA_HULL_DRATE]);
+		rate64 = nla_get_u64(tb[TCA_HULL_DRATE]);
 	psched_ratecfg_precompute(&drate, &qopt->drate, rate64);
 	memcpy(&q->drate, &drate, sizeof(struct psched_ratecfg));
 	q->freq = psched_ns_freq(&drate, q->mtu);

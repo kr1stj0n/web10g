@@ -37,6 +37,7 @@ static int hull_parse_opt(struct qdisc_util *qu, int argc, char **argv,
 			  struct nlmsghdr *n, const char *dev)
 {
 	struct tc_hull_qopt opt = {};
+	struct rtattr *tail;
 	__u64 drate = 0;
         int ok = 0;
 
@@ -54,7 +55,7 @@ static int hull_parse_opt(struct qdisc_util *qu, int argc, char **argv,
 			ok++;
                 } else if (strcmp(*argv, "drate") == 0) {
 			NEXT_ARG();
-			if (drate64) {
+			if (drate) {
 				fprintf(stderr, "hull: duplicate \"drate\" specification\n");
 				return -1;
 			}
@@ -117,7 +118,7 @@ static int hull_parse_opt(struct qdisc_util *qu, int argc, char **argv,
 
 	tail = addattr_nest(n, 1024, TCA_OPTIONS);
 	addattr_l(n, 2024, TCA_HULL_PARMS, &opt, sizeof(opt));
-	if (drate64 >= (1ULL << 32))
+	if (drate >= (1ULL << 32))
 		addattr_l(n, 2124, TCA_HULL_DRATE, &drate, sizeof(drate));
 	addattr_nest_end(n, tail);
 	return 0;
