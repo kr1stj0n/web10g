@@ -225,8 +225,6 @@ static struct sk_buff *hull_dequeue(struct Qdisc *sch)
 	if (skb) {
 		u64 now, delta;
 
-		unsigned int len = qdisc_pkt_len(skb);
-
 		now = ktime_get_ns();
 		delta = now - q->t_c;
 
@@ -328,7 +326,7 @@ static int hull_init(struct Qdisc *sch, struct nlattr *opt,
 	struct hull_sched_data *q = qdisc_priv(sch);
 
 	qdisc_watchdog_init(&q->watchdog, sch);
-	q->qdisc = &noop_qdisc;
+	q->qdisc = sch;
 
 	if (!opt)
 		return -EINVAL;
@@ -345,19 +343,17 @@ static void hull_destroy(struct Qdisc *sch)
 {
 	struct hull_sched_data *q = qdisc_priv(sch);
 
-	qdisc_watchdog_cancel(&q->watchdog);
-	qdisc_put(q->qdisc);
+	/* Only cancel watchdog if it's been initialized. */
+	if (q->watchdog.qdisc == sch)
+		qdisc_watchdog_cancel(&q->watchdog);
 }
 
 static int hull_dump(struct Qdisc *sch, struct sk_buff *skb)
 {
 	struct hull_sched_data *q = qdisc_priv(sch);
-	struct nlattr *nest;
 	struct tc_hull_qopt opt;
-
-	sch->qstats.backlog = q->qdisc->qstats.backlog;
-	nest = nla_nest_start_noflag(skb, TCA_OPTIONS);
-	if (nest == NULL)
+	struct nlattr *nest = nla_nest_start_noflag(skb, TCA_OPTIONS);
+	if (!nest)
 		goto nla_put_failure;
 
 	opt.limit = q->limit;
