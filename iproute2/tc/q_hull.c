@@ -10,6 +10,7 @@
  *
  */
 
+#include "linux/pkt_sched.h"
 #include <stdio.h>
 #include <stdlib.h>
 #include <unistd.h>
@@ -36,19 +37,18 @@ static void explain1(const char *arg, const char *val)
 static int hull_parse_opt(struct qdisc_util *qu, int argc, char **argv,
 			  struct nlmsghdr *n, const char *dev)
 {
-	struct tc_hull_qopt opt = {};
+	__u32 limit, drate, markth;
 	struct rtattr *tail;
-	__u64 drate = 0;
         int ok = 0;
 
 	while (argc > 0) {
 		if (matches(*argv, "limit") == 0) {
 			NEXT_ARG();
-			if (opt.limit) {
+			if (limit) {
 				fprintf(stderr, "hull: duplicate \"limit\" specification\n");
 				return -1;
 			}
-			if (get_size(&opt.limit, *argv)) {
+			if (get_size(&limit, *argv)) {
 				explain1("limit", *argv);
 				return -1;
 			}
@@ -60,22 +60,22 @@ static int hull_parse_opt(struct qdisc_util *qu, int argc, char **argv,
 				return -1;
 			}
 			if (strchr(*argv, '%')) {
-				if (get_percent_rate64(&drate, *argv, dev)) {
+				if (get_percent_rate(&drate, *argv, dev)) {
 					explain1("drate", *argv);
 					return -1;
 				}
-			} else if (get_rate64(&drate, *argv)) {
+			} else if (get_rate(&drate, *argv)) {
 				explain1("drate", *argv);
 				return -1;
 			}
 			ok++;
 		} else if (matches(*argv, "markth") == 0) {
 			NEXT_ARG();
-			if (opt.markth) {
+			if (markth) {
 				fprintf(stderr, "hull: duplicate \"markth\" specification\n");
 				return -1;
 			}
-			if (get_size(&opt.markth, *argv)) {
+			if (get_size(&markth, *argv)) {
 				explain1("markth", *argv);
 				return -1;
 			}
@@ -97,15 +97,15 @@ static int hull_parse_opt(struct qdisc_util *qu, int argc, char **argv,
 	 * one go rather than reveal one more problem when a
 	 * previous one has been fixed.
 	 */
-        if (opt.limit == 0) {
+        if (!limit) {
             fprintf(stderr, "hull: \"limit\" is required.\n");
             verdict = -1;
         }
-	if (drate == 0) {
+	if (!drate) {
 		fprintf(stderr, "hull: the \"drate\" parameter is mandatory.\n");
 		verdict = -1;
 	}
-	if (!opt.markth) {
+	if (!markth) {
 		fprintf(stderr, "hull: the \"markth\" parameter is mandatory.\n");
 		verdict = -1;
 	}
@@ -114,21 +114,19 @@ static int hull_parse_opt(struct qdisc_util *qu, int argc, char **argv,
 		return verdict;
 	}
 
-	opt.drate.rate = (drate >= (1ULL << 32)) ? ~0U : drate;
-
 	tail = addattr_nest(n, 1024, TCA_OPTIONS);
-	addattr_l(n, 2024, TCA_HULL_PARMS, &opt, sizeof(opt));
-	if (drate >= (1ULL << 32))
-		addattr_l(n, 2124, TCA_HULL_DRATE, &drate, sizeof(drate));
+	addattr_l(n, 1024, TCA_HULL_LIMIT, &limit, sizeof(limit));
+	addattr_l(n, 1024, TCA_HULL_DRATE, &drate, sizeof(drate));
+	addattr_l(n, 1024, TCA_HULL_MARKTH, &markth, sizeof(markth));
 	addattr_nest_end(n, tail);
+
 	return 0;
 }
 
 static int hull_print_opt(struct qdisc_util *qu, FILE *f, struct rtattr *opt)
 {
 	struct rtattr *tb[TCA_HULL_MAX+1];
-	struct tc_hull_qopt *qopt;
-	__u64 drate = 0;
+	__u32 limit, drate, markth;
 
 	SPRINT_BUF(b1);
 
@@ -137,22 +135,23 @@ static int hull_print_opt(struct qdisc_util *qu, FILE *f, struct rtattr *opt)
 
 	parse_rtattr_nested(tb, TCA_HULL_MAX, opt);
 
-	if (tb[TCA_HULL_PARMS] == NULL)
-		return -1;
+	if (tb[TCA_HULL_LIMIT] &&
+            RTA_PAYLOAD(tb[TCA_HULL_LIMIT]) >= sizeof(__u32)) {
+		limit = rta_getattr_u32(tb[TCA_HULL_LIMIT]);
+		fprintf(f, "limit %s ", sprint_size(limit, b1));
+	}
 
-	qopt = RTA_DATA(tb[TCA_HULL_PARMS]);
-	if (RTA_PAYLOAD(tb[TCA_HULL_PARMS])  < sizeof(*qopt))
-		return -1;
-
-	fprintf(f, "limit %s ", sprint_size(qopt->limit, b1));
-
-	drate = qopt->drate.rate;
 	if (tb[TCA_HULL_DRATE] &&
-	    RTA_PAYLOAD(tb[TCA_HULL_DRATE]) >= sizeof(drate))
-		drate = rta_getattr_u64(tb[TCA_HULL_DRATE]);
-	fprintf(f, "drate %s ", sprint_rate(drate, b1));
+            RTA_PAYLOAD(tb[TCA_HULL_DRATE]) >= sizeof(__u32)) {
+		drate = rta_getattr_u32(tb[TCA_HULL_DRATE]);
+		fprintf(f, "drate %s ", sprint_rate(drate, b1));
+	}
 
-	fprintf(f, "markth %s ", sprint_size(qopt->markth, b1));
+	if (tb[TCA_HULL_MARKTH] &&
+            RTA_PAYLOAD(tb[TCA_HULL_MARKTH]) >= sizeof(__u32)) {
+		markth = rta_getattr_u32(tb[TCA_HULL_MARKTH]);
+		fprintf(f, "markth %s ", sprint_size(markth, b1));
+	}
 
 	return 0;
 }

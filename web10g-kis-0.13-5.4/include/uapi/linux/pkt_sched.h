@@ -207,15 +207,15 @@ enum {
 
 struct tc_hull_qopt {
 	__u32 limit;
-	struct tc_ratespec drate;
+	__u32 drate;
 	__u32 markth;
 };
 
 enum {
 	TCA_HULL_UNSPEC,
-	TCA_HULL_PARMS,
+	TCA_HULL_LIMIT,
 	TCA_HULL_DRATE,
-	TCA_HULL_PAD,
+	TCA_HULL_MARKTH,
 	__TCA_HULL_MAX
 };
 
