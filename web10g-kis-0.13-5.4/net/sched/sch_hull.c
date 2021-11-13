@@ -5,6 +5,7 @@
  * Author:	Kristjon Ciko
  */
 
+#include "linux/pkt_sched.h"
 #include <linux/module.h>
 #include <linux/types.h>
 #include <linux/kernel.h>
@@ -93,6 +94,13 @@
 	changed the limit is not effective anymore.
 */
 
+/* parameters used */
+struct hull_params {
+	u32 limit;	/* Maximal length of backlog: bytes */
+	u32 drate; 	/* drain rate of PQ */
+	u32 markth;	/* ECN marking threshold */
+};
+
 /* statistics gathering */
 struct hull_stats {
 	u32 avg_rate;		/* current average rate */
@@ -104,31 +112,44 @@ struct hull_stats {
 	u32 ecn_mark;		/* packets marked with ECN */
 };
 
-struct hull_sched_data {
-/* Parameters */
-	u32	limit;		/* Maximal length of backlog: bytes */
-	struct	psched_ratecfg drate;
-	u32	markth;		/* ECN marking threshold */
-
-/* Variables */
-	u64	t_c;			/* Time check-point */
-	u64	freq;			/* dequeue frequency */
-	u32	counter;		/* PQ counter */
-	u32	avg_rate;		/* bytes per pschedtime tick,scaled */
-	u32	mtu; 			/* MTU of interface */
-	struct hull_stats stats;	/* HULL statistics */
-	struct Qdisc	*qdisc;		/* Inner qdisc, default - bfifo queue */
-	struct qdisc_watchdog watchdog;	/* Watchdog timer */
+/* variables used */
+struct hull_vars {
+	u64 t_c;	/* Time check-point */
+	u64 freq;	/* dequeue frequency */
+	u32 counter;	/* PQ counter */
+	u32 mtu;	/* MTU of interface */
 };
+
+struct hull_sched_data {
+	struct hull_params params;	/* HULL parameters */
+	struct hull_vars vars;		/* HULL variables */
+	struct hull_stats stats;	/* HULL statistics */
+	struct qdisc_watchdog watchdog;	/* Watchdog timer */
+	struct Qdisc	*qdisc;		/* Inner qdisc, default - bfifo queue */
+};
+
+static void hull_params_init(struct hull_params *params)
+{
+	params->limit  = 1000U;		   /* default of 1000 packets */
+	params->drate  = 12500000U;	   /* default 100Mbps */
+	params->markth = 1514U;		   /* default 1 pkt */
+}
+
+static void hull_vars_init(struct hull_vars *vars)
+{
+	vars->t_c = ktime_get_ns();
+	vars->freq = 0ULL;
+	vars->counter = 0U;
+	vars->mtu = 0U;
+}
 
 /* Calculates the frequency in ns of dequeueing a packet based on drain rate
  */
-static inline u64 psched_ns_freq(const struct psched_ratecfg *r, u32 mtu)
+static inline u64 psched_ns_freq(u32 drate, u32 mtu)
 {
 	u64 div = (u64)(1ULL * mtu * NSEC_PER_SEC);
-	u32 rem = (u32)r->rate_bytes_ps;
 
-	do_div(div, rem);
+	do_div(div, drate);
 
 	return div;
 }
@@ -179,9 +200,9 @@ static int hull_enqueue(struct sk_buff *skb, struct Qdisc *sch,
 	unsigned int len = qdisc_pkt_len(skb);
 	int ret;
 
-	if (qdisc_pkt_len(skb) > q->mtu) {
+	if (qdisc_pkt_len(skb) > q->vars.mtu) {
 		if (skb_is_gso(skb) &&
-		    skb_gso_validate_mac_len(skb, q->mtu))
+		    skb_gso_validate_mac_len(skb, q->vars.mtu))
 			return hull_segment(skb, sch, to_free);
 		return qdisc_drop(skb, sch, to_free);
 	}
@@ -191,7 +212,7 @@ static int hull_enqueue(struct sk_buff *skb, struct Qdisc *sch,
 	 * */
 	__net_timestamp(skb);
 
-	if (q->counter + len > q->markth) {
+	if (q->vars.counter + len > q->params.markth) {
 		if (INET_ECN_set_ce(skb)) {
 			/* If packet is ecn capable, mark it with a prob. */
 			q->stats.ecn_mark++;
@@ -209,7 +230,7 @@ static int hull_enqueue(struct sk_buff *skb, struct Qdisc *sch,
 	sch->q.qlen++;
 	if (qdisc_qlen(sch) > q->stats.maxq)
 		q->stats.maxq = qdisc_qlen(sch);
-	q->counter += len;
+	q->vars.counter += len;
 	q->stats.packets_in++;
 	return NET_XMIT_SUCCESS;
 }
@@ -226,16 +247,16 @@ static struct sk_buff *hull_dequeue(struct Qdisc *sch)
 		u64 now, delta;
 
 		now = ktime_get_ns();
-		delta = now - q->t_c;
+		delta = now - q->vars.t_c;
 
-		if (delta >= q->freq) {
+		if (delta >= q->vars.freq) {
 			skb = qdisc_dequeue_peeked(q->qdisc);
 			if (unlikely(!skb))
 				return NULL;
 
-			q->t_c = now;
+			q->vars.t_c = now;
 			qdisc_qstats_backlog_dec(sch, skb);
-			q->counter -= qdisc_pkt_len(skb);
+			q->vars.counter -= qdisc_pkt_len(skb);
 			sch->q.qlen--;
 			qdisc_bstats_update(sch, skb);
 			/* >> 10 is approx /1000 */
@@ -246,7 +267,7 @@ static struct sk_buff *hull_dequeue(struct Qdisc *sch)
 			return skb;
 		}
 
-		qdisc_watchdog_schedule_ns(&q->watchdog, q->t_c + q->freq);
+		qdisc_watchdog_schedule_ns(&q->watchdog, q->vars.t_c + q->vars.freq);
 
 		qdisc_qstats_overlimit(sch);
 	}
@@ -257,17 +278,19 @@ static void hull_reset(struct Qdisc *sch)
 {
 	struct hull_sched_data *q = qdisc_priv(sch);
 
-	qdisc_reset(q->qdisc);
-	sch->qstats.backlog = 0;
-	sch->q.qlen = 0;
-	q->counter = 0;
-	q->t_c = ktime_get_ns();
-	qdisc_watchdog_cancel(&q->watchdog);
+	/* Only cancel watchdog if it's been initialized. */
+	if (q->watchdog.qdisc == sch)
+		qdisc_watchdog_cancel(&q->watchdog);
+
+	qdisc_reset_queue(sch);
+
+	hull_vars_init(&q->vars);
 }
 
 static const struct nla_policy hull_policy[TCA_HULL_MAX + 1] = {
-	[TCA_HULL_PARMS]  = { .len = sizeof(struct tc_hull_qopt) },
-	[TCA_HULL_DRATE] = { .type = NLA_U64 },
+	[TCA_HULL_LIMIT]  = { .type = NLA_U32 },
+	[TCA_HULL_DRATE] = { .type = NLA_U32 },
+	[TCA_HULL_MARKTH] = { .type = NLA_U32 },
 };
 
 static int hull_change(struct Qdisc *sch, struct nlattr *opt,
@@ -275,33 +298,31 @@ static int hull_change(struct Qdisc *sch, struct nlattr *opt,
 {
 	struct hull_sched_data *q = qdisc_priv(sch);
 	struct nlattr *tb[TCA_HULL_MAX + 1];
-	struct tc_hull_qopt *qopt;
-	struct psched_ratecfg drate;
-	u64 rate64 = 0;
-	u32 qlen, dropped = 0U;
+	u32 limit, qlen,dropped;
 	int err;
 
-	err = nla_parse_nested_deprecated(tb, TCA_HULL_MAX, opt, hull_policy,
-					  NULL);
+	if (!opt)
+		return -EINVAL;
+
+	err = nla_parse_nested_deprecated(tb, TCA_HULL_MAX, opt, shq_policy,
+			NULL);
 	if (err < 0)
 		return err;
 
-	err = -EINVAL;
-	if (tb[TCA_HULL_PARMS] == NULL)
-		goto done;
-
 	sch_tree_lock(sch);
 
-	qopt = nla_data(tb[TCA_HULL_PARMS]);
-	sch->limit = qopt->limit;
-	q->limit = qopt->limit;
-	q->markth = qopt->markth;
+	if (tb[TCA_HULL_LIMIT]) {
+		limit = nla_get_u32(tb[TCA_HULL_LIMIT]);
+
+		q->params.limit = limit;
+		sch->limit = limit;
+	}
 
 	if (tb[TCA_HULL_DRATE])
-		rate64 = nla_get_u64(tb[TCA_HULL_DRATE]);
-	psched_ratecfg_precompute(&drate, &qopt->drate, rate64);
-	memcpy(&q->drate, &drate, sizeof(struct psched_ratecfg));
-	q->freq = psched_ns_freq(&drate, q->mtu);
+		q->params.drate = nla_get_u32(tb[TCA_HULL_DRATE]);
+
+	if (tb[TCA_HULL_MARKTH])
+		q->params.markth = nla_get_u32(tb[TCA_HULL_MARKTH]);
 
 	/* Drop excess packets if new limit is lower */
 	qlen = sch->q.qlen;
@@ -315,9 +336,7 @@ static int hull_change(struct Qdisc *sch, struct nlattr *opt,
 	qdisc_tree_reduce_backlog(sch, qlen - sch->q.qlen, dropped);
 
 	sch_tree_unlock(sch);
-	err = 0;
-done:
-	return err;
+	return 0;
 }
 
 static int hull_init(struct Qdisc *sch, struct nlattr *opt,
@@ -325,16 +344,16 @@ static int hull_init(struct Qdisc *sch, struct nlattr *opt,
 {
 	struct hull_sched_data *q = qdisc_priv(sch);
 
-	qdisc_watchdog_init(&q->watchdog, sch);
+	hull_params_init(&q->params);
+	hull_vars_init(&q->vars);
+	sch->limit = q->params.limit;
+
 	q->qdisc = sch;
+	qdisc_watchdog_init(&q->watchdog, sch);
+	q->vars.mtu = psched_mtu(qdisc_dev(sch));
 
 	if (!opt)
 		return -EINVAL;
-
-	q->counter = 0;
-	q->avg_rate = 0;
-	q->mtu = psched_mtu(qdisc_dev(sch));
-	q->t_c = ktime_get_ns();
 
 	return hull_change(sch, opt, extack);
 }
@@ -351,25 +370,20 @@ static void hull_destroy(struct Qdisc *sch)
 static int hull_dump(struct Qdisc *sch, struct sk_buff *skb)
 {
 	struct hull_sched_data *q = qdisc_priv(sch);
-	struct tc_hull_qopt opt;
-	struct nlattr *nest = nla_nest_start_noflag(skb, TCA_OPTIONS);
-	if (!nest)
+	struct nlattr *opts = nla_nest_start_noflag(skb, TCA_OPTIONS);
+
+	if (!opts)
 		goto nla_put_failure;
 
-	opt.limit = q->limit;
-	psched_ratecfg_getrate(&opt.drate, &q->drate);
-	opt.markth = q->markth;
-	if (nla_put(skb, TCA_HULL_PARMS, sizeof(opt), &opt))
-		goto nla_put_failure;
-	if (q->drate.rate_bytes_ps >= (1ULL << 32) &&
-	    nla_put_u64_64bit(skb, TCA_HULL_DRATE, q->drate.rate_bytes_ps,
-			      TCA_HULL_PAD))
+	if (nla_put_u32(skb, TCA_HULL_LIMIT, sch->limit) ||
+	    nla_put_u32(skb, TCA_HULL_DRATE, q->params.drate) ||
+	    nla_put_u32(skb, TCA_HULL_MARKTH, q->params.markth))
 		goto nla_put_failure;
 
-	return nla_nest_end(skb, nest);
+	return nla_nest_end(skb, opts);
 
 nla_put_failure:
-	nla_nest_cancel(skb, nest);
+	nla_nest_cancel(skb, opts);
 	return -1;
 }
 
@@ -378,8 +392,7 @@ static int hull_dump_stats(struct Qdisc *sch, struct gnet_dump *d)
 	struct hull_sched_data *q = qdisc_priv(sch);
 	struct tc_hull_xstats st = {
 		/* unscale and return dq_rate in bytes per sec */
-		.avg_rate	= q->avg_rate *
-					(PSCHED_TICKS_PER_SEC) >> HULL_SCALE,
+		.avg_rate	= q->stats.avg_rate * (PSCHED_TICKS_PER_SEC) >> HULL_SCALE,
 		.qdelay         = q->stats.qdelay,
 		.packets_in	= q->stats.packets_in,
 		.dropped	= q->stats.dropped,
