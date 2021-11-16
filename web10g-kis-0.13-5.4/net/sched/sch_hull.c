@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 /*
- * net/sched/sch_hull.c Phantom queue
+ * net/sched/sch_hull.c HULL
  *
  * Author:	Kristjon Ciko
  */
@@ -17,82 +17,6 @@
 #include <net/pkt_sched.h>
 #include <net/inet_ecn.h>
 
-#define HULL_SCALE 8
-
-/*	Simple Token Bucket Filter.
-	=======================================
-
-	SOURCE.
-	-------
-
-	None.
-
-	Description.
-	------------
-
-	A data flow obeys TBF with rate R and depth B, if for any
-	time interval t_i...t_f the number of transmitted bits
-	does not exceed B + R*(t_f-t_i).
-
-	Packetized version of this definition:
-	The sequence of packets of sizes s_i served at moments t_i
-	obeys TBF, if for any i<=k:
-
-	s_i+....+s_k <= B + R*(t_k - t_i)
-
-	Algorithm.
-	----------
-
-	Let N(t_i) be B/R initially and N(t) grow continuously with time as:
-
-	N(t+delta) = min{B/R, N(t) + delta}
-
-	If the first packet in queue has length S, it may be
-	transmitted only at the time t_* when S/R <= N(t_*),
-	and in this case N(t) jumps:
-
-	N(t_* + 0) = N(t_* - 0) - S/R.
-
-
-
-	Actually, QoS requires two TBF to be applied to a data stream.
-	One of them controls steady state burst size, another
-	one with rate P (peak rate) and depth M (equal to link MTU)
-	limits bursts at a smaller time scale.
-
-	It is easy to see that P>R, and B>M. If P is infinity, this double
-	TBF is equivalent to a single one.
-
-	When TBF works in reshaping mode, latency is estimated as:
-
-	lat = max ((L-B)/R, (L-M)/P)
-
-
-	NOTES.
-	------
-
-	If TBF throttles, it starts a watchdog timer, which will wake it up
-	when it is ready to transmit.
-	Note that the minimal timer resolution is 1/HZ.
-	If no new packets arrive during this period,
-	or if the device is not awaken by EOI for some previous packet,
-	TBF can stop its activity for 1/HZ.
-
-
-	This means, that with depth B, the maximal rate is
-
-	R_crit = B*HZ
-
-	F.e. for 10Mbit ethernet and HZ=100 the minimal allowed B is ~10Kbytes.
-
-	Note that the peak rate TBF is much more tough: with MTU 1500
-	P_crit = 150Kbytes/sec. So, if you need greater peak
-	rates, use alpha with HZ=1000 :-)
-
-	With classful TBF, limit is just kept for backwards compatibility.
-	It is passed to the default bfifo qdisc - if the inner qdisc is
-	changed the limit is not effective anymore.
-*/
 
 /* parameters used */
 struct hull_params {
@@ -114,8 +38,8 @@ struct hull_stats {
 
 /* variables used */
 struct hull_vars {
-	u64 t_c;	/* Time check-point */
-	u64 freq;	/* dequeue frequency */
+	u64 last;	/* time when last packet was dequeued */
+	u64 freq;	/* dequeuing frequency */
 	u32 counter;	/* PQ counter */
 	u32 mtu;	/* MTU of interface */
 };
@@ -128,19 +52,19 @@ struct hull_sched_data {
 	struct Qdisc	*qdisc;		/* Inner qdisc, default - bfifo queue */
 };
 
-static void hull_params_init(struct hull_params *params)
+static void hull_params_init(struct hull_sched_data *q)
 {
-	params->limit  = 1000U;		   /* default of 1000 packets */
-	params->drate  = 12500000U;	   /* default 100Mbps */
-	params->markth = 1514U;		   /* default 1 pkt */
+	q->params.limit  = 1000U;		/* default of 1000 packets */
+	q->params.drate  = 12500000U;		/* default 100Mbps */
+	q->params.markth = 1514U;		/* default 1 pkt */
 }
 
-static void hull_vars_init(struct hull_vars *vars)
+static void hull_vars_init(struct hull_sched_data *q)
 {
-	vars->t_c = ktime_get_ns();
-	vars->freq = 0ULL;
-	vars->counter = 0U;
-	vars->mtu = 0U;
+	q->vars.last	= ktime_get_ns();
+	q->vars.freq	= 120000ULL;
+	q->vars.counter = 0U;
+	q->vars.mtu	= 1514U;
 }
 
 /* Calculates the frequency in ns of dequeueing a packet based on drain rate
@@ -197,7 +121,7 @@ static int hull_enqueue(struct sk_buff *skb, struct Qdisc *sch,
 		        struct sk_buff **to_free)
 {
 	struct hull_sched_data *q = qdisc_priv(sch);
-	unsigned int len = qdisc_pkt_len(skb);
+	unsigned int len;
 	int ret;
 
 	if (qdisc_pkt_len(skb) > q->vars.mtu) {
@@ -207,17 +131,18 @@ static int hull_enqueue(struct sk_buff *skb, struct Qdisc *sch,
 		return qdisc_drop(skb, sch, to_free);
 	}
 
-	/* Timestamp the packet in order to calculate
-	 * * the queuing delay in the dequeue process.
-	 * */
-	__net_timestamp(skb);
-
+	len = qdisc_pkt_len(skb);
 	if (q->vars.counter + len > q->params.markth) {
 		if (INET_ECN_set_ce(skb)) {
 			/* If packet is ecn capable, mark it with a prob. */
 			q->stats.ecn_mark++;
 		}
 	}
+
+	/* Timestamp the packet in order to calculate
+	 * * the queuing delay in the dequeue process.
+	 * */
+	__net_timestamp(skb);
 
 	ret = qdisc_enqueue(skb, q->qdisc, to_free);
 	if (ret != NET_XMIT_SUCCESS) {
@@ -230,8 +155,10 @@ static int hull_enqueue(struct sk_buff *skb, struct Qdisc *sch,
 	sch->q.qlen++;
 	if (qdisc_qlen(sch) > q->stats.maxq)
 		q->stats.maxq = qdisc_qlen(sch);
+
 	q->vars.counter += len;
 	q->stats.packets_in++;
+
 	return NET_XMIT_SUCCESS;
 }
 
@@ -244,17 +171,12 @@ static struct sk_buff *hull_dequeue(struct Qdisc *sch)
 	skb = q->qdisc->ops->peek(q->qdisc);
 
 	if (skb) {
-		u64 now, delta;
-
-		now = ktime_get_ns();
-		delta = now - q->vars.t_c;
-
-		if (delta >= q->vars.freq) {
+		if (ktime_get_ns() >= q->vars.last + q->vars.freq) {
 			skb = qdisc_dequeue_peeked(q->qdisc);
 			if (unlikely(!skb))
 				return NULL;
 
-			q->vars.t_c = now;
+			q->vars.last = ktime_get_ns();
 			qdisc_qstats_backlog_dec(sch, skb);
 			q->vars.counter -= qdisc_pkt_len(skb);
 			sch->q.qlen--;
@@ -267,24 +189,11 @@ static struct sk_buff *hull_dequeue(struct Qdisc *sch)
 			return skb;
 		}
 
-		qdisc_watchdog_schedule_ns(&q->watchdog, q->vars.t_c + q->vars.freq);
-
+		qdisc_watchdog_schedule_ns(&q->watchdog,
+					   q->vars.last + q->vars.freq);
 		qdisc_qstats_overlimit(sch);
 	}
 	return NULL;
-}
-
-static void hull_reset(struct Qdisc *sch)
-{
-	struct hull_sched_data *q = qdisc_priv(sch);
-
-	/* Only cancel watchdog if it's been initialized. */
-	if (q->watchdog.qdisc == sch)
-		qdisc_watchdog_cancel(&q->watchdog);
-
-	qdisc_reset_queue(sch);
-
-	hull_vars_init(&q->vars);
 }
 
 static const struct nla_policy hull_policy[TCA_HULL_MAX + 1] = {
@@ -298,45 +207,52 @@ static int hull_change(struct Qdisc *sch, struct nlattr *opt,
 {
 	struct hull_sched_data *q = qdisc_priv(sch);
 	struct nlattr *tb[TCA_HULL_MAX + 1];
-	u32 limit, qlen,dropped;
+	struct Qdisc *child = NULL;
 	int err;
 
-	if (!opt)
-		return -EINVAL;
-
-	err = nla_parse_nested_deprecated(tb, TCA_HULL_MAX, opt, shq_policy,
+	err = nla_parse_nested_deprecated(tb, TCA_HULL_MAX, opt, hull_policy,
 			NULL);
 	if (err < 0)
 		return err;
 
-	sch_tree_lock(sch);
+	err = -EINVAL;
+	if (tb[TCA_HULL_LIMIT] == NULL)
+		goto done;
+	q->params.limit = nla_get_u32(tb[TCA_HULL_LIMIT]);
 
-	if (tb[TCA_HULL_LIMIT]) {
-		limit = nla_get_u32(tb[TCA_HULL_LIMIT]);
-
-		q->params.limit = limit;
-		sch->limit = limit;
-	}
-
-	if (tb[TCA_HULL_DRATE])
+	if (tb[TCA_HULL_DRATE]) {
 		q->params.drate = nla_get_u32(tb[TCA_HULL_DRATE]);
+		q->vars.freq = psched_ns_freq(q->params.drate, q->vars.mtu);
+	}
 
 	if (tb[TCA_HULL_MARKTH])
 		q->params.markth = nla_get_u32(tb[TCA_HULL_MARKTH]);
 
-	/* Drop excess packets if new limit is lower */
-	qlen = sch->q.qlen;
-	while (sch->q.qlen > sch->limit) {
-		struct sk_buff *skb = __qdisc_dequeue_head(&sch->q);
+	if (q->qdisc != &noop_qdisc) {
+		err = fifo_set_limit(q->qdisc, q->params.limit);
+		if (err)
+			goto done;
+	} else if (q->params.limit > 0) {
+		child = fifo_create_dflt(sch, &bfifo_qdisc_ops, q->params.limit,
+					 extack);
+		if (IS_ERR(child)) {
+			err = PTR_ERR(child);
+			goto done;
+		}
 
-		dropped += qdisc_pkt_len(skb);
-		qdisc_qstats_backlog_dec(sch, skb);
-		rtnl_qdisc_drop(skb, sch);
+		/* child is fifo, no need to check for noop_qdisc */
+		qdisc_hash_add(child, true);
 	}
-	qdisc_tree_reduce_backlog(sch, qlen - sch->q.qlen, dropped);
-
+	sch_tree_lock(sch);
+	if (child) {
+		qdisc_tree_flush_backlog(q->qdisc);
+		qdisc_put(q->qdisc);
+		q->qdisc = child;
+	}
 	sch_tree_unlock(sch);
-	return 0;
+	err = 0;
+done:
+	return err;
 }
 
 static int hull_init(struct Qdisc *sch, struct nlattr *opt,
@@ -344,34 +260,26 @@ static int hull_init(struct Qdisc *sch, struct nlattr *opt,
 {
 	struct hull_sched_data *q = qdisc_priv(sch);
 
-	hull_params_init(&q->params);
-	hull_vars_init(&q->vars);
-	sch->limit = q->params.limit;
-
-	q->qdisc = sch;
 	qdisc_watchdog_init(&q->watchdog, sch);
-	q->vars.mtu = psched_mtu(qdisc_dev(sch));
+	q->qdisc = &noop_qdisc;
 
 	if (!opt)
 		return -EINVAL;
 
+	hull_params_init(q);
+	hull_vars_init(q);
+	q->vars.mtu = psched_mtu(qdisc_dev(sch));
+
 	return hull_change(sch, opt, extack);
 }
 
-static void hull_destroy(struct Qdisc *sch)
-{
-	struct hull_sched_data *q = qdisc_priv(sch);
-
-	/* Only cancel watchdog if it's been initialized. */
-	if (q->watchdog.qdisc == sch)
-		qdisc_watchdog_cancel(&q->watchdog);
-}
 
 static int hull_dump(struct Qdisc *sch, struct sk_buff *skb)
 {
 	struct hull_sched_data *q = qdisc_priv(sch);
 	struct nlattr *opts = nla_nest_start_noflag(skb, TCA_OPTIONS);
 
+	sch->qstats.backlog = q->qdisc->qstats.backlog;
 	if (!opts)
 		goto nla_put_failure;
 
@@ -404,7 +312,89 @@ static int hull_dump_stats(struct Qdisc *sch, struct gnet_dump *d)
 	return gnet_stats_copy_app(d, &st, sizeof(st));
 }
 
+static void hull_reset(struct Qdisc *sch)
+{
+	struct hull_sched_data *q = qdisc_priv(sch);
+
+	qdisc_reset(q->qdisc);
+	sch->qstats.backlog = 0;
+	sch->q.qlen = 0;
+
+	/* Reset vars */
+	hull_vars_init(q);
+
+	/* Only cancel watchdog if it's been initialized. */
+	if (q->watchdog.qdisc == sch)
+		qdisc_watchdog_cancel(&q->watchdog);
+}
+
+static void hull_destroy(struct Qdisc *sch)
+{
+	struct hull_sched_data *q = qdisc_priv(sch);
+
+	/* Only cancel watchdog if it's been initialized. */
+	if (q->watchdog.qdisc == sch)
+		qdisc_watchdog_cancel(&q->watchdog);
+	qdisc_put(q->qdisc);
+}
+
+static int hull_dump_class(struct Qdisc *sch, unsigned long cl,
+			   struct sk_buff *skb, struct tcmsg *tcm)
+{
+	struct hull_sched_data *q = qdisc_priv(sch);
+
+	tcm->tcm_handle |= TC_H_MIN(1);
+	tcm->tcm_info = q->qdisc->handle;
+
+	return 0;
+}
+
+static int hull_graft(struct Qdisc *sch, unsigned long arg, struct Qdisc *new,
+		      struct Qdisc **old, struct netlink_ext_ack *extack)
+{
+	struct hull_sched_data *q = qdisc_priv(sch);
+
+	if (new == NULL)
+		new = &noop_qdisc;
+
+	*old = qdisc_replace(sch, new, &q->qdisc);
+	return 0;
+}
+
+static struct Qdisc *hull_leaf(struct Qdisc *sch, unsigned long arg)
+{
+	struct hull_sched_data *q = qdisc_priv(sch);
+	return q->qdisc;
+}
+
+static unsigned long hull_find(struct Qdisc *sch, u32 classid)
+{
+	return 1;
+}
+
+static void hull_walk(struct Qdisc *sch, struct qdisc_walker *walker)
+{
+	if (!walker->stop) {
+		if (walker->count >= walker->skip)
+			if (walker->fn(sch, 1, walker) < 0) {
+				walker->stop = 1;
+				return;
+			}
+		walker->count++;
+	}
+}
+
+static const struct Qdisc_class_ops hull_class_ops = {
+	.graft		=	hull_graft,
+	.leaf		=	hull_leaf,
+	.find		=	hull_find,
+	.walk		=	hull_walk,
+	.dump		=	hull_dump_class,
+};
+
 static struct Qdisc_ops hull_qdisc_ops __read_mostly = {
+	.next		=	NULL,
+	.cl_ops		=	&hull_class_ops,
 	.id		=	"hull",
 	.priv_size	=	sizeof(struct hull_sched_data),
 	.enqueue	=	hull_enqueue,

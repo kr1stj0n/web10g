@@ -37,7 +37,7 @@ static void explain1(const char *arg, const char *val)
 static int hull_parse_opt(struct qdisc_util *qu, int argc, char **argv,
 			  struct nlmsghdr *n, const char *dev)
 {
-	__u32 limit, drate, markth;
+	__u32 limit = 0U, drate = 0U, markth = 0U;
 	struct rtattr *tail;
         int ok = 0;
 
