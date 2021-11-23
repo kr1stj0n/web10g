@@ -166,6 +166,7 @@ static struct sk_buff *hull_dequeue(struct Qdisc *sch)
 {
 	struct hull_sched_data *q = qdisc_priv(sch);
 	struct sk_buff *skb;
+	unsigned int len;
 	u64 qdelay = 0ULL;
 
 	skb = q->qdisc->ops->peek(q->qdisc);
@@ -178,7 +179,11 @@ static struct sk_buff *hull_dequeue(struct Qdisc *sch)
 
 			q->vars.last = ktime_get_ns();
 			qdisc_qstats_backlog_dec(sch, skb);
-			q->vars.counter -= qdisc_pkt_len(skb);
+			len = qdisc_pkt_len(skb);
+			if (q->vars.counter > len)
+				q->vars.counter -= len;
+			else
+				q->vars.counter = 0U;
 			sch->q.qlen--;
 			qdisc_bstats_update(sch, skb);
 			/* >> 10 is approx /1000 */
@@ -299,9 +304,8 @@ static int hull_dump_stats(struct Qdisc *sch, struct gnet_dump *d)
 {
 	struct hull_sched_data *q = qdisc_priv(sch);
 	struct tc_hull_xstats st = {
-		/* unscale and return dq_rate in bytes per sec */
-		.avg_rate	= q->stats.avg_rate * (PSCHED_TICKS_PER_SEC) >> HULL_SCALE,
-		.qdelay         = q->stats.qdelay,
+		.avg_rate	= q->stats.avg_rate,
+		.qdelay 	= q->stats.qdelay,
 		.packets_in	= q->stats.packets_in,
 		.dropped	= q->stats.dropped,
 		.overlimit	= q->stats.overlimit,

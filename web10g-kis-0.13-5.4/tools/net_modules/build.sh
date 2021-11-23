@@ -53,7 +53,8 @@ build_modules() {
     #eval $CMD
 
     # TCP_LGC
-    CMD="sudo rmmod -f tcp_lgc;
+    CMD="sudo sysctl net.ipv4.tcp_congestion_control=cubic;
+         sudo rmmod -f tcp_lgc;
          cp Makefile.lgc ../../net/ipv4/Makefile;
          cd ../../ && make modules_prepare && make M=net/ipv4/ clean && make M=net/ipv4/ modules && sudo make M=net/ipv4/ modules_install;
          sudo depmod -a;
@@ -65,7 +66,8 @@ build_modules() {
     #eval $CMD
 
     # TCP_DCTCP
-    CMD="sudo rmmod -f tcp_dctcp;
+    CMD="sudo sysctl net.ipv4.tcp_congestion_control=cubic;
+         sudo rmmod -f tcp_dctcp;
          cp Makefile.dctcp ../../net/ipv4/Makefile;
          cd ../../ && make modules_prepare && make M=net/ipv4/ clean && make M=net/ipv4/ modules && sudo make M=net/ipv4/ modules_install;
          sudo depmod -a;
