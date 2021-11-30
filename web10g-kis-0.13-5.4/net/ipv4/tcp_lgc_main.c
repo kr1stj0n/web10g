@@ -40,7 +40,7 @@ struct lgc {
 	u32 old_delivered;
 	u32 old_delivered_ce;
 	u32 next_seq;
-	u32 rate;
+	u64 rate;
 	u32 minRTT;
 	u32 fraction;
 	u8  rate_eval:1;
@@ -67,8 +67,8 @@ static unsigned int lgc_coef __read_mostly = 20;
 module_param(lgc_coef, uint, 0644);
 MODULE_PARM_DESC(lgc_coef, "lgc_coef");
 
-/* lgc_max_rate = 12500 bytes/msec | 100Mbps */
-static unsigned int lgc_max_rate __read_mostly = 12500;
+/* lgc_max_rate = 125000 bytes/msec = 1000Mbps */
+static unsigned int lgc_max_rate __read_mostly = 125000;
 module_param(lgc_max_rate, uint, 0644);
 MODULE_PARM_DESC(lgc_max_rate, "lgc_max_rate");
 /* End of Module parameters */
@@ -92,9 +92,10 @@ static void tcp_lgc_init(struct sock *sk)
 		struct lgc *ca = inet_csk_ca(sk);
 
 		ca->rate_eval = 0;
-		ca->rate      = 1U;
-		ca->minRTT    = 1U<<20; /* reference RTT ~1s */
+		ca->rate      = 1ULL;
+		ca->minRTT    = 1U<<20;	/* reference RTT ~1s */
 		ca->fraction  = 0U;
+
 		lgc_reset(tp, ca);
 
 		return;
@@ -119,8 +120,7 @@ static void lgc_init_rate(struct sock *sk)
 	init_rate <<= LGC_SHIFT;
 	do_div(init_rate, ca->minRTT);
 
-	ca->rate = (u32)init_rate;
-
+	ca->rate = init_rate;
 	ca->rate_eval = 1;
 }
 
@@ -153,15 +153,15 @@ static void lgc_update_pacing_rate(struct sock *sk)
 	 * without any lock. We want to make sure compiler wont store
 	 * intermediate values in this location.
 	 */
-	WRITE_ONCE(sk->sk_pacing_rate, min_t(u64, rate,
-					     sk->sk_max_pacing_rate));
+	WRITE_ONCE(sk->sk_pacing_rate, min_t(u64, rate, sk->sk_max_pacing_rate));
 }
 
 static void lgc_update_rate(struct sock *sk)
 {
 	struct tcp_sock *tp = tcp_sk(sk);
 	struct lgc *ca = inet_csk_ca(sk);
-	u32 rate = ca->rate;
+	u64 rate = ca->rate;
+	u64 rateo = ca->rate;
 
 	u32 delivered_ce = tp->delivered_ce - ca->old_delivered_ce;
 	u32 delivered = tp->delivered - ca->old_delivered;
@@ -189,7 +189,8 @@ static void lgc_update_rate(struct sock *sk)
 		q = lgc_log_lut_lookup(ca->fraction) / lgc_logPhi_11;
 
 	/* Calculate gradient */
-	s32 gradient = (s32)((s32)(ONE) - (s32)(rate / lgc_max_rate) - (s32)q);
+	do_div(rateo, lgc_max_rate);
+	s32 gradient = (s32)((s32)(ONE) - (s32)(rateo) - (s32)q);
 
 	u32 gr = 1U<<30;
 	if (delivered_ce == ONE)
@@ -207,7 +208,7 @@ static void lgc_update_rate(struct sock *sk)
 	gr_rate_gradient *= gradient;
 	gr_rate_gradient >>= 32;	/* back to 16-bit scaled */
 
-	u32 new_rate = (u32)(rate + gr_rate_gradient);
+	u64 new_rate = (u64)(rate + gr_rate_gradient);
 
 	/* new rate shouldn't increase more than twice */
 	if (new_rate > (rate << 1))
@@ -216,7 +217,7 @@ static void lgc_update_rate(struct sock *sk)
 		rate = new_rate;
 
 	/* Check if the new rate exceeds the link capacity */
-	u32 max_rate_scaled = lgc_max_rate << LGC_SHIFT;
+	u64 max_rate_scaled = lgc_max_rate << LGC_SHIFT;
 	if (rate > max_rate_scaled)
 		rate = max_rate_scaled;
 
@@ -235,8 +236,7 @@ static void lgc_set_cwnd(struct sock *sk)
 	struct tcp_sock *tp = tcp_sk(sk);
 	struct lgc *ca = inet_csk_ca(sk);
 
-	u64 target_cwnd = 1ULL;
-	target_cwnd *= ca->rate;
+	u64 target_cwnd = ca->rate;
 	target_cwnd *= ca->minRTT;
 	target_cwnd >>= LGC_SHIFT;
 	do_div(target_cwnd, tp->mss_cache * USEC_PER_MSEC);
@@ -269,7 +269,7 @@ static void tcp_lgc_main(struct sock *sk, const struct rate_sample *rs)
 }
 
 static size_t tcp_lgc_get_info(struct sock *sk, u32 ext, int *attr,
-                           union tcp_cc_info *info)
+			       union tcp_cc_info *info)
 {
 	const struct lgc *ca = inet_csk_ca(sk);
 	const struct tcp_sock *tp = tcp_sk(sk);
@@ -332,5 +332,5 @@ module_exit(lgc_unregister);
 MODULE_AUTHOR("Peyman Teymoori <peymant@ifi.uio.no>");
 MODULE_AUTHOR("Kr1stj0n C1k0 <kristjoc@ifi.uio.no>");
 MODULE_LICENSE("GPL");
-MODULE_VERSION("2.0");
+MODULE_VERSION("1.3");
 MODULE_DESCRIPTION("Logistic Growth Congestion Control (LGC)");

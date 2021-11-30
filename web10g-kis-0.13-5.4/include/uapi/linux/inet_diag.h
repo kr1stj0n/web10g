@@ -73,7 +73,7 @@ enum {
  * to offset cc+"yes" or to offset cc+"no". "yes" is supposed to be
  * length of the command and its arguments.
  */
- 
+
 struct inet_diag_bc_op {
 	unsigned char	code;
 	unsigned char	yes;
@@ -200,7 +200,7 @@ struct tcp_dctcp_info {
 
 struct tcp_lgc_info {
 	__u16	lgc_enabled;
-	__u32	lgc_rate;
+	__u64	lgc_rate;
 	__u32	lgc_ab_ecn;
 	__u32	lgc_ab_tot;
 };

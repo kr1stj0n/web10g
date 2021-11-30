@@ -190,7 +190,7 @@ static const struct nla_policy shq_policy[TCA_SHQ_MAX + 1] = {
 };
 
 static int shq_change(struct Qdisc *sch, struct nlattr *opt,
-		struct netlink_ext_ack *extack)
+		      struct netlink_ext_ack *extack)
 {
 	struct shq_sched_data *q = qdisc_priv(sch);
 	struct nlattr *tb[TCA_SHQ_MAX + 1];
@@ -248,7 +248,7 @@ static int shq_change(struct Qdisc *sch, struct nlattr *opt,
 }
 
 static int shq_init(struct Qdisc *sch, struct nlattr *opt,
-		struct netlink_ext_ack *extack)
+		    struct netlink_ext_ack *extack)
 {
 	struct shq_sched_data *q = qdisc_priv(sch);
 	int err;
