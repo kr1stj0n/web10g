@@ -190,7 +190,7 @@ static void lgc_update_rate(struct sock *sk)
 
 	/* Calculate gradient */
 	do_div(rateo, lgc_max_rate);
-	s32 gradient = (s32)((s32)(ONE) - (s32)(rateo) - (s32)q);
+	s64 gradient = (s64)((s64)(ONE) - (s64)(rateo) - (s64)q);
 
 	u32 gr = 1U<<30;
 	if (delivered_ce == ONE)
