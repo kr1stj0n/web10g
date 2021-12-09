@@ -33,7 +33,8 @@
 
 #define LGC_SHIFT	16
 #define ONE		(1U<<16)
-#define THRESSH		((8U<<16)/10U)    /* ~0.8  */
+#define BIG_ONE		(1LL<<16)
+#define THRESSH		((9U<<16)/10U)    /* ~0.9  */
 #define FRAC_LIMIT	((99U<<16)/100U)  /* ~0.99 */
 
 struct lgc {
@@ -93,7 +94,7 @@ static void tcp_lgc_init(struct sock *sk)
 
 		ca->rate_eval = 0;
 		ca->rate      = 1ULL;
-		ca->minRTT    = 1U<<20;	/* reference RTT ~1s */
+		ca->minRTT    = 1U<<10;	/* reference of minRTT ever seen ~1ms */
 		ca->fraction  = 0U;
 
 		lgc_reset(tp, ca);
@@ -131,7 +132,7 @@ static void lgc_update_pacing_rate(struct sock *sk)
 	u64 rate;
 
 	/* set sk_pacing_rate to 100 % of current rate (mss * cwnd / rtt) */
-	rate = (u64)tp->mss_cache * ((USEC_PER_SEC / 100));
+	rate = (u64)tp->mss_cache * ((USEC_PER_SEC / 100) << 3);
 
 	/* current rate is (cwnd * mss) / srtt
 	 * In Slow Start [1], set sk_pacing_rate to 200 % the current rate.
@@ -146,8 +147,8 @@ static void lgc_update_pacing_rate(struct sock *sk)
 
 	rate *= max(tp->snd_cwnd, tp->packets_out);
 
-	if (likely(ca->minRTT))
-		do_div(rate, ca->minRTT);
+	if (likely(tp->srtt_us))
+		do_div(rate, tp->srtt_us);
 
 	/* WRITE_ONCE() is needed because sch_fq fetches sk_pacing_rate
 	 * without any lock. We want to make sure compiler wont store
@@ -160,19 +161,21 @@ static void lgc_update_rate(struct sock *sk)
 {
 	struct tcp_sock *tp = tcp_sk(sk);
 	struct lgc *ca = inet_csk_ca(sk);
+	s64 gr_rate_gradient = 1LL;
 	u64 rate = ca->rate;
 	u64 rateo = ca->rate;
+	u64 q = 0ULL;
+	u32 fraction = 0U;
+	u32 gr = 1U<<30;
 
 	u32 delivered_ce = tp->delivered_ce - ca->old_delivered_ce;
 	u32 delivered = tp->delivered - ca->old_delivered;
 
 	delivered_ce <<= LGC_SHIFT;
-	delivered_ce /= max(1U, delivered);
+	delivered_ce /= max(delivered, 1U);
 
-	u32 fraction = 0U;
 	if (delivered_ce >= THRESSH) {
-		fraction = ((ONE - lgc_alpha_16) * ca->fraction) +
-			(lgc_alpha_16 * delivered_ce);
+		fraction = ((ONE - lgc_alpha_16) * ca->fraction) + (lgc_alpha_16 * delivered_ce);
 		ca->fraction = fraction >> LGC_SHIFT;
 	} else {
 		fraction = (ONE - lgc_alpha_16) * ca->fraction;
@@ -184,15 +187,13 @@ static void lgc_update_rate(struct sock *sk)
 	/* At this point, we have a ca->fraction = [0,1) << LGC_SHIFT */
 
 	/* after the division, q is FP << 16 */
-	u32 q = 0U;
 	if (ca->fraction)
-		q = lgc_log_lut_lookup(ca->fraction) / lgc_logPhi_11;
+		q = (u64)(lgc_log_lut_lookup(ca->fraction) / lgc_logPhi_11);
 
 	/* Calculate gradient */
 	do_div(rateo, lgc_max_rate);
-	s64 gradient = (s64)((s64)(ONE) - (s64)(rateo) - (s64)q);
+	s64 gradient = (s64)((s64)(BIG_ONE) - (s64)(rateo) - (s64)q);
 
-	u32 gr = 1U<<30;
 	if (delivered_ce == ONE)
 		gr /= lgc_coef;
 	else {
@@ -200,7 +201,6 @@ static void lgc_update_rate(struct sock *sk)
 			gr = lgc_exp_lut_lookup(delivered_ce); /* 30bit scaled */
 	}
 
-	s64 gr_rate_gradient = 1LL;
 	gr_rate_gradient *= gr;
 	gr_rate_gradient *= lgc_logP_16;
 	gr_rate_gradient >>= 30;	/* 16-bit scaled at this point */
@@ -217,7 +217,8 @@ static void lgc_update_rate(struct sock *sk)
 		rate = new_rate;
 
 	/* Check if the new rate exceeds the link capacity */
-	u64 max_rate_scaled = lgc_max_rate << LGC_SHIFT;
+	u64 max_rate_scaled = (u64)lgc_max_rate;
+	max_rate_scaled <<= LGC_SHIFT;
 	if (rate > max_rate_scaled)
 		rate = max_rate_scaled;
 
@@ -229,19 +230,20 @@ static void lgc_update_rate(struct sock *sk)
 }
 
 /* Calculate cwnd based on current rate and minRTT
- * cwnd = rate * rtt / mss
+ * cwnd = rate * minRT / mss
  */
 static void lgc_set_cwnd(struct sock *sk)
 {
 	struct tcp_sock *tp = tcp_sk(sk);
 	struct lgc *ca = inet_csk_ca(sk);
 
-	u64 target_cwnd = ca->rate;
-	target_cwnd *= ca->minRTT;
+	u64 target_cwnd = ca->rate * ca->minRTT;
 	target_cwnd >>= LGC_SHIFT;
 	do_div(target_cwnd, tp->mss_cache * USEC_PER_MSEC);
 
-	tp->snd_cwnd = max((u32)target_cwnd + 1, 2U);
+	tp->snd_cwnd = max_t(u32, (u32)target_cwnd, 2U);
+	/* Add a small gain to avoid truncation in bandwidth */
+	tp->snd_cwnd <<= 1;
 
 	if (tp->snd_cwnd > tp->snd_cwnd_clamp)
 		tp->snd_cwnd = tp->snd_cwnd_clamp;
@@ -251,17 +253,15 @@ static void tcp_lgc_main(struct sock *sk, const struct rate_sample *rs)
 {
 	struct tcp_sock *tp = tcp_sk(sk);
 	struct lgc *ca = inet_csk_ca(sk);
-        ca->minRTT = min_not_zero(tcp_min_rtt(tp), ca->minRTT);
 
 	/* Expired RTT */
 	if (!before(tp->snd_una, ca->next_seq)) {
+		ca->minRTT = min_not_zero(tcp_min_rtt(tp), ca->minRTT);
 		if (unlikely(!ca->rate_eval))
 			lgc_init_rate(sk);
 
 		lgc_update_rate(sk);
-
 		lgc_set_cwnd(sk);
-
 		lgc_reset(tp, ca);
 	}
 
