@@ -218,7 +218,7 @@ enum {
 	__TCA_HULL_MAX,
 };
 
-#define TCA_HULL_MAX   (__TCA_HULL_MAX - 1)
+#define TCA_HULL_MAX (__TCA_HULL_MAX - 1)
 
 struct tc_hull_xstats {
 	__u32 avg_rate;         /* current average dq_rate */

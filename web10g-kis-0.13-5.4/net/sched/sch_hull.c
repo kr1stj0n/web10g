@@ -61,8 +61,8 @@ static void hull_params_init(struct hull_sched_data *q)
 
 static void hull_vars_init(struct hull_sched_data *q)
 {
-	q->vars.last	= ktime_get_ns();
-	q->vars.freq	= 120000ULL;
+	q->vars.last	= ktime_get_ns();  /* last time a packet was dequeued */
+	q->vars.freq	= 120000ULL;       /* draining rate frequency in ns */
 	q->vars.counter = 0U;
 	q->vars.mtu	= 1514U;
 }
@@ -203,7 +203,7 @@ static struct sk_buff *hull_dequeue(struct Qdisc *sch)
 
 static const struct nla_policy hull_policy[TCA_HULL_MAX + 1] = {
 	[TCA_HULL_LIMIT]  = { .type = NLA_U32 },
-	[TCA_HULL_DRATE] = { .type = NLA_U32 },
+	[TCA_HULL_DRATE]  = { .type = NLA_U32 },
 	[TCA_HULL_MARKTH] = { .type = NLA_U32 },
 };
 
@@ -224,6 +224,7 @@ static int hull_change(struct Qdisc *sch, struct nlattr *opt,
 	if (tb[TCA_HULL_LIMIT] == NULL)
 		goto done;
 	q->params.limit = nla_get_u32(tb[TCA_HULL_LIMIT]);
+	sch->limit = q->params.limit;
 
 	if (tb[TCA_HULL_DRATE]) {
 		q->params.drate = nla_get_u32(tb[TCA_HULL_DRATE]);

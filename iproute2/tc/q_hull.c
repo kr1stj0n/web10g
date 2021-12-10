@@ -42,7 +42,7 @@ static int hull_parse_opt(struct qdisc_util *qu, int argc, char **argv,
         int ok = 0;
 
 	while (argc > 0) {
-		if (matches(*argv, "limit") == 0) {
+		if (strcmp(*argv, "limit") == 0) {
 			NEXT_ARG();
 			if (limit) {
 				fprintf(stderr, "hull: duplicate \"limit\" specification\n");
@@ -69,7 +69,7 @@ static int hull_parse_opt(struct qdisc_util *qu, int argc, char **argv,
 				return -1;
 			}
 			ok++;
-		} else if (matches(*argv, "markth") == 0) {
+		} else if (strcmp(*argv, "markth") == 0) {
 			NEXT_ARG();
 			if (markth) {
 				fprintf(stderr, "hull: duplicate \"markth\" specification\n");
