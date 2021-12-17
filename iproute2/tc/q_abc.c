@@ -41,14 +41,14 @@ static void explain(void)
 static int abc_parse_opt(struct qdisc_util *qu, int argc, char **argv,
                          struct nlmsghdr *n, const char *dev)
 {
-	unsigned int limit    = 1000;          /* default: 1000p */
-        unsigned int bw       = 12500000;      /* default: 100mbit in bps */
-	unsigned int interval = 10000;         /* default: 10ms in usecs */
+	unsigned int limit    = 1000;		/* default: 1000p */
+        unsigned int bw       = 12500000;	/* default: 100mbit in bps */
+	unsigned int interval = 10000;		/* default: 10ms in usecs */
         double       ita      = 1.0;
-        unsigned int delta    = 10000;	       /* at least bigger than maxRTT */
-	unsigned int rqdelay  = 50000;         /* default: 50ms in usecs */
-        unsigned int tokens   = 5;	       /* default: 5 */
-
+        unsigned int delta    = 10000;		/* at least bigger than maxRTT */
+	unsigned int rqdelay  = 50000;		/* default: 50ms in usecs */
+        unsigned int tokens   = 5;		/* default: 5 */
+        __u32        sc_ita;
 	struct rtattr *tail;
 
 	while (argc > 0) {
@@ -124,7 +124,7 @@ static int abc_parse_opt(struct qdisc_util *qu, int argc, char **argv,
 	if (interval)
 		addattr_l(n, 1024, TCA_ABC_INTERVAL, &interval, sizeof(interval));
 	if (ita) {
-                sc_ita = maxp * pow(2, ABC_SCALE);
+                sc_ita = ita * pow(2, ABC_SCALE);
                 addattr_l(n, 1024, TCA_ABC_ITA, &sc_ita, sizeof(sc_ita));
         }
 	if (delta)
@@ -188,7 +188,7 @@ static int abc_print_opt(struct qdisc_util *qu, FILE *f, struct rtattr *opt)
 	if (tb[TCA_ABC_DELTA] &&
             RTA_PAYLOAD(tb[TCA_ABC_DELTA]) >= sizeof(__u32)) {
 		delta = rta_getattr_u32(tb[TCA_ABC_DELTA]);
-		print_string(PRINT_FP, NULL, "interval %s ", sprint_time(interval, b1));
+		print_string(PRINT_FP, NULL, "delta %s ", sprint_time(delta, b1));
 	}
 	/* rqdelay */
 	if (tb[TCA_ABC_RQDELAY] &&
