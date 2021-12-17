@@ -71,6 +71,7 @@ TCMODULES += q_fq_codel.o
 TCMODULES += q_fq.o
 TCMODULES += q_pie.o
 TCMODULES += q_shq.o
+TCMODULES += q_abc.o
 TCMODULES += q_hull.o
 TCMODULES += q_cake.o
 TCMODULES += q_hhf.o

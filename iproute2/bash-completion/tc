@@ -330,6 +330,10 @@ _tc_qdisc_options()
             _tc_one_of_list 'ecn noecn'
             return 0
             ;;
+        abc)
+            _tc_once_attr 'limit bandwidth interval ita delta qdelay tokens'
+            return 0
+            ;;
         hull)
             _tc_once_attr 'limit rate burst markth'
             return 0

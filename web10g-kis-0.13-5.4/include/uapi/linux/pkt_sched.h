@@ -1017,6 +1017,30 @@ struct tc_shq_xstats {
 	__u32 ecn_mark;         /* packets marked with ecn*/
 };
 
+/* ABC */
+enum {
+	TCA_ABC_UNSPEC,
+	TCA_ABC_BANDWIDTH,
+	TCA_ABC_LIMIT,
+	TCA_ABC_INTERVAL,
+	TCA_ABC_ITA,
+	TCA_ABC_DELTA,
+	TCA_ABC_RQDELAY,
+	TCA_ABC_TOKENS,
+	__TCA_ABC_MAX
+};
+#define TCA_ABC_MAX   (__TCA_ABC_MAX - 1)
+
+struct tc_abc_xstats {
+	__u32 avg_rate;		/* current average rate */
+	__u64 qdelay;	        /* current queuing delay */
+	__u32 packets_in;	/* total number of packets enqueued */
+	__u32 dropped;		/* packets dropped due to shq_action */
+	__u32 overlimit;	/* dropped due to full queue */
+	__u16 maxq;		/* maximum queue size */
+	__u32 ecn_mark;		/* packets marked with ecn*/
+};
+
 /* CBS */
 struct tc_cbs_qopt {
 	__u8 offload;
