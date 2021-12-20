@@ -59,13 +59,13 @@ struct abc_sched_data {
 
 static void abc_params_init(struct abc_params *params)
 {
-	params->limit     = 1000U;		/* default of 1000 packets */
-	params->bandwidth = 125000U;		/* 1000Mbps */
-	params->interval  = PSCHED_NS2TICKS(10 * NSEC_PER_MSEC);      /* 10ms */
-	params->ita       = 1U;
-	params->delta     = PSCHED_NS2TICKS(10 * NSEC_PER_MSEC);      /* 10ms */
-	params->rqdelay   = PSCHED_NS2TICKS(10 * NSEC_PER_MSEC);      /* 10ms */
-	params->tokens    = 5U;
+	params->limit		= 1000U;	/* default of 1000 packets */
+	params->bandwidth	= 125000U;				/* 1000Mbps */
+	params->interval	= PSCHED_NS2TICKS(10 * NSEC_PER_MSEC);	/* 10ms */
+	params->ita		= 1U;
+	params->delta		= PSCHED_NS2TICKS(10 * NSEC_PER_MSEC);	/* 10ms */
+	params->rqdelay		= PSCHED_NS2TICKS(10 * NSEC_PER_MSEC);	/* 10ms */
+	params->tokens		= 5U;
 }
 
 static void abc_vars_init(struct abc_vars *vars)
@@ -164,7 +164,7 @@ static int abc_change(struct Qdisc *sch, struct nlattr *opt,
 		q->params.rqdelay = PSCHED_NS2TICKS((u64)us * NSEC_PER_USEC);
 	}
 
-	if (tb[TCA_SHQ_TOKENS])
+	if (tb[TCA_ABC_TOKENS])
 		q->params.tokens = nla_get_u32(tb[TCA_ABC_TOKENS]);
 
 	/* Drop excess packets if new limit is lower */
