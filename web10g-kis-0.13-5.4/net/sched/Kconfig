@@ -388,6 +388,17 @@ config NET_SCH_HULL
 
 	  If unsure, say N.
 
+config NET_SCH_ABC
+	tristate "ABC scheduler"
+	help
+	  Say Y here if you want to use the ABC packet scheduling algorithm.
+	  For more information, please see https://www.usenix.org/conference/nsdi20/presentation/goyal
+
+	  To compile this driver as a module, choose M here: the module
+	  will be called sch_abc.
+
+	  If unsure, say N.
+
 config NET_SCH_INGRESS
 	tristate "Ingress/classifier-action Qdisc"
 	depends on NET_CLS_ACT
