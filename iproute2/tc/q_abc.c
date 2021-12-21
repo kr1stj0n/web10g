@@ -162,7 +162,7 @@ static int abc_print_opt(struct qdisc_util *qu, FILE *f, struct rtattr *opt)
 	if (tb[TCA_ABC_LIMIT] &&
             RTA_PAYLOAD(tb[TCA_ABC_LIMIT]) >= sizeof(__u32)) {
 		limit = rta_getattr_u32(tb[TCA_ABC_LIMIT]);
-		fprintf(f, "limit %s ", sprint_size(limit, b1));
+		fprintf(f, "limit %up ", limit);
 	}
 	/* bandwidth */
 	if (tb[TCA_ABC_BANDWIDTH] &&
