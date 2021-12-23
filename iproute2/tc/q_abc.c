@@ -29,13 +29,13 @@
 #include "utils.h"
 #include "tc_util.h"
 
-#define ABC_SCALE 16
+#define ABC_SCALE 8
 
 static void explain(void)
 {
 	fprintf(stderr,
 		"Usage: ... abc [ limit PACKETS ] [bandwidth BPS][ interval MS ]\n"
-		"               [ ita ] [ delta MS ] [rqdelay MS] [ tokens ]\n");
+		"               [ ita ] [ delta MS ] [rqdelay MS]\n");
 }
 
 static int abc_parse_opt(struct qdisc_util *qu, int argc, char **argv,
@@ -47,7 +47,6 @@ static int abc_parse_opt(struct qdisc_util *qu, int argc, char **argv,
         double       ita      = 1.0;
         unsigned int delta    = 10000;		/* at least bigger than maxRTT */
 	unsigned int rqdelay  = 50000;		/* default: 50ms in usecs */
-        unsigned int tokens   = 5;		/* default: 5 */
         __u32        sc_ita;
 	struct rtattr *tail;
 
@@ -94,12 +93,6 @@ static int abc_parse_opt(struct qdisc_util *qu, int argc, char **argv,
 				fprintf(stderr, "Illegal \"rqdelay\"\n");
 				return -1;
 				}
-		} else if (strcmp(*argv, "tokens") == 0) {
-			NEXT_ARG();
-			if (get_unsigned(&tokens, *argv, 0)) {
-				fprintf(stderr, "Illegal \"tokens\"\n");
-				return -1;
-			}
 		} else if (strcmp(*argv, "help") == 0) {
 			explain();
 			return -1;
@@ -133,8 +126,6 @@ static int abc_parse_opt(struct qdisc_util *qu, int argc, char **argv,
 	if (rqdelay)
 		addattr_l(n, 1024, TCA_ABC_RQDELAY, &rqdelay, sizeof(rqdelay));
 
-	if (tokens)
-		addattr_l(n, 1024, TCA_ABC_TOKENS, &tokens, sizeof(tokens));
 	addattr_nest_end(n, tail);
 
 	return 0;
@@ -149,7 +140,6 @@ static int abc_print_opt(struct qdisc_util *qu, FILE *f, struct rtattr *opt)
 	unsigned int ita;
 	unsigned int delta;
 	unsigned int rqdelay;
-	unsigned int tokens;
 
 	SPRINT_BUF(b1);
 
@@ -196,13 +186,6 @@ static int abc_print_opt(struct qdisc_util *qu, FILE *f, struct rtattr *opt)
 		rqdelay = rta_getattr_u32(tb[TCA_ABC_RQDELAY]);
 		print_string(PRINT_FP, NULL, "rqdelay %s ", sprint_time(rqdelay, b1));
 	}
-	/* tokens */
-	if (tb[TCA_ABC_TOKENS] &&
-            RTA_PAYLOAD(tb[TCA_ABC_TOKENS]) >= sizeof(__u32)) {
-		tokens = rta_getattr_u32(tb[TCA_ABC_TOKENS]);
-		if (tokens)
-			print_uint(PRINT_ANY, "tokens", "tokens %u ", tokens);
-	}
 
 	return 0;
 }
@@ -233,7 +216,6 @@ static int abc_print_xstats(struct qdisc_util *qu, FILE *f,
 	print_uint(PRINT_ANY, "ecn_mark", " ecn_mark %u", st->ecn_mark);
 
 	return 0;
-
 }
 
 struct qdisc_util abc_qdisc_util = {

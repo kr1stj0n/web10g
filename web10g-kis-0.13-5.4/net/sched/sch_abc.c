@@ -17,30 +17,29 @@
 #include <net/inet_ecn.h>
 
 #define ABC_SCALE 16
-#define ONE (1U<<16)
+#define ONE (1ULL<<16)
+#define TOKEN_LIMIT (5ULL<<16)
 
 /* parameters used */
 struct abc_params {
 	u32 limit;		/* number of packets that can be enqueued */
-	u32 bandwidth;		/* bandwidth interface bytes/sec */
-	psched_time_t interval;	/* user specified interval in pschedtime */
-	u32 ita;		/* ita is the scaled ita value [0,1] */
-	psched_time_t delta;	/* user specified delta in pschedtime */
-	psched_time_t rqdelay;	/* reference queuing delay */
-	u32 tokens;		/* default tokens available 5 */
+	u32 bandwidth;		/* bandwidth interface bytes/jiffies << 8 */
+	u32 interval;		/* interval frequency (in jiffies) */
+	u32 ita;		/* ita value [0,1] << 8 */
+	u32 delta;		/* user specified delta stored in ns */
+	u64 rqdelay;		/* reference queuing delay in ns */
 };
 
 /* variables used */
 struct abc_vars {
-	u64 avg_qlen;		/* average length of the queue */
-	u64 cur_qlen;		/* current length of the queue */
-	u32 avg_rate;		/* bytes per pschedtime tick, scaled */
-	psched_time_t r_time;	/* last time prob. was calculated */
+	u64 token;		/* dequeue token */
+	u64 dq_count;		/* bytes dequeued during the interval */
+	u32 dq_rate;		/* bytes per jiffies */
 };
 
 /* statistics gathering */
 struct abc_stats {
-	u32 avg_rate;		/* current average rate */
+	u32 dq_rate;		/* current draining queue rate */
 	u64 qdelay;		/* current queuing delay */
 	u32 packets_in;		/* total number of packets enqueued */
 	u32 dropped;		/* packets dropped due to abc_action */
@@ -54,28 +53,85 @@ struct abc_sched_data {
 	struct abc_params params;
 	struct abc_vars vars;
 	struct abc_stats stats;
+	struct timer_list adapt_timer;
 	struct Qdisc *sch;
 };
 
 static void abc_params_init(struct abc_params *params)
 {
-	params->limit		= 1000U;	/* default of 1000 packets */
-	params->bandwidth	= 125000U;				/* 1000Mbps */
-	params->interval	= PSCHED_NS2TICKS(10 * NSEC_PER_MSEC);	/* 10ms */
-	params->ita		= 1U;
-	params->delta		= PSCHED_NS2TICKS(10 * NSEC_PER_MSEC);	/* 10ms */
-	params->rqdelay		= PSCHED_NS2TICKS(10 * NSEC_PER_MSEC);	/* 10ms */
-	params->tokens		= 5U;
+	params->limit = 1000U;	/* default of 1000 packets */
+	/* default bandwidth is 1Gbps in bytes/jiffies */
+	params->bandwidth = 1U;
+	params->interval = usecs_to_jiffies(10 * USEC_PER_MSEC); /* 10 ms */
+	params->ita = 1U;
+	params->delta = (u32)(10 * NSEC_PER_MSEC);	/* 10ms */
+	params->rqdelay = (u64)(10 * NSEC_PER_MSEC);	/* 10ms */
 }
 
 static void abc_vars_init(struct abc_vars *vars)
 {
-	vars->avg_qlen = 0ULL;
-	vars->cur_qlen = 0ULL;
-	vars->avg_rate = 0U;
-	vars->r_time   = psched_get_time();
+	vars->token = 0ULL;
+	vars->dq_count = 0ULL;
+	vars->dq_rate  = 0U;
 }
 
+static void calculate_drain_rate(struct Qdisc *sch)
+{
+	struct abc_sched_data *q = qdisc_priv(sch);
+	u32 count = q->vars.dq_count << ABC_SCALE;
+
+	if (!q->params.interval)
+		return;
+
+	/* calculate dq_rate in bytes per jiffies << ABC_SCALE */
+	count = count / q->params.interval;
+
+	if (q->vars.dq_rate == 0)
+		q->vars.dq_rate = count;
+	else
+		q->vars.dq_rate =
+			(q->vars.dq_rate - (q->vars.dq_rate >> 3)) + (count >> 3);
+
+	q->vars.dq_count = 0U;
+}
+
+static void abc_timer(struct timer_list *t)
+{
+	struct abc_sched_data *q = from_timer(q, t, adapt_timer);
+	struct Qdisc *sch = q->sch;
+	spinlock_t *root_lock = qdisc_lock(qdisc_root_sleeping(sch));
+
+	spin_lock(root_lock);
+	calculate_drain_rate(sch);
+
+	/* reset the timer to fire after 'interval'. interval is in jiffies. */
+	if (q->params.interval)
+		mod_timer(&q->adapt_timer, jiffies + q->params.interval);
+	spin_unlock(root_lock);
+}
+
+static int abc_init(struct Qdisc *sch, struct nlattr *opt,
+		    struct netlink_ext_ack *extack)
+{
+	struct abc_sched_data *q = qdisc_priv(sch);
+	int err;
+
+	abc_params_init(&q->params);
+	abc_vars_init(&q->vars);
+	sch->limit = q->params.limit;
+
+	q->sch = sch;
+	timer_setup(&q->adapt_timer, abc_timer, 0);
+
+	if (opt) {
+		err = abc_change(sch, opt, extack);
+		if (err)
+			return err;
+	}
+
+	mod_timer(&q->adapt_timer, jiffies + HZ / 2);
+	return 0;
+}
 
 static int abc_qdisc_enqueue(struct sk_buff *skb, struct Qdisc *sch,
 			     struct sk_buff **to_free)
@@ -102,6 +158,65 @@ out:
 	return qdisc_drop(skb, sch, to_free);
 }
 
+static void abc_process_dequeue(struct Qdisc *sch, struct sk_buff *skb)
+{
+	struct abc_sched_data *q = qdisc_priv(sch);
+	u64 target_rate, ft;
+
+	if (q->params.rqdelay > q->stats.qdelay)
+		target_rate = q->params.rqdelay - q->stats.qdelay;
+	else
+		target_rate = q->stats.qdelay - q->params.rqdelay;
+
+	target_rate <<= 8;
+	do_div(target_rate, q->params.delta);
+
+	target_rate += q->params.ita;
+
+	target_rate *= q->params.bandwidth;
+
+	/* At this point, target_rate = dqd is in bytes/jiffies 16-bit scaled */
+
+	//calculate f(t) using Eq 2.
+	do_div(target_rate, q->vars.dq_rate);
+	target_rate >>= 1;
+	ft = min_t(u64, ONE, target_rate);
+
+	// token = min(token + f(t), tokenLimit);
+	q->vars.token += ft;
+	q->vars.token = min_t(u64, q->vars.token, TOKEN_LIMIT);
+
+	if (q->vars.token > ONE) {
+		q->vars.token -= ONE;
+	} else {
+		if (INET_ECN_set_ce(skb)) {
+			/* If packet is ecn capable, mark it with a prob. */
+			q->stats.ecn_mark++;
+		}
+	}
+
+	q->vars.dq_count += qdisc_pkt_len(skb);
+}
+
+static struct sk_buff *abc_qdisc_dequeue(struct Qdisc *sch)
+{
+	struct abc_sched_data *q = qdisc_priv(sch);
+	struct sk_buff *skb = qdisc_dequeue_head(sch);
+	u64 qdelay = 0ULL;
+
+	if (unlikely(!skb))
+		return NULL;
+
+	abc_process_dequeue(sch, skb);
+
+	/* >> 10 ~ /1000 */
+	qdelay = ((__force __u64)(ktime_get_real_ns() -
+				  ktime_to_ns(skb_get_ktime(skb)))) >> 10;
+	q->stats.qdelay = qdelay;
+
+	return skb;
+}
+
 static const struct nla_policy abc_policy[TCA_ABC_MAX + 1] = {
 	[TCA_ABC_LIMIT]     = {.type = NLA_U32},
 	[TCA_ABC_BANDWIDTH] = {.type = NLA_U32},
@@ -109,7 +224,6 @@ static const struct nla_policy abc_policy[TCA_ABC_MAX + 1] = {
 	[TCA_ABC_ITA]       = {.type = NLA_U32},
 	[TCA_ABC_DELTA]     = {.type = NLA_U32},
 	[TCA_ABC_RQDELAY]   = {.type = NLA_U32},
-	[TCA_ABC_TOKENS]    = {.type = NLA_U32},
 };
 
 static int abc_change(struct Qdisc *sch, struct nlattr *opt,
@@ -117,7 +231,7 @@ static int abc_change(struct Qdisc *sch, struct nlattr *opt,
 {
 	struct abc_sched_data *q = qdisc_priv(sch);
 	struct nlattr *tb[TCA_ABC_MAX + 1];
-	u32 qlen, us, dropped = 0U;
+	u32 bw, qlen, us, dropped = 0U;
 	int err;
 
 	if (!opt)
@@ -139,14 +253,14 @@ static int abc_change(struct Qdisc *sch, struct nlattr *opt,
 	}
 
 	/* bandwidth */
-	if (tb[TCA_ABC_BANDWIDTH])
-		q->params.bandwidth = nla_get_u32(tb[TCA_ABC_BANDWIDTH]);
-
-	/* interval is in us */
-	if (tb[TCA_ABC_INTERVAL]) {
-		us = nla_get_u32(tb[TCA_ABC_INTERVAL]);
-		q->params.interval = PSCHED_NS2TICKS((u64)us * NSEC_PER_USEC);
+	if (tb[TCA_ABC_BANDWIDTH]) {
+		bw = nla_get_u32(tb[TCA_ABC_BANDWIDTH]);
+		q->params.bandwidth = bw << 8;
 	}
+
+	/* interval is in jiffies */
+	if (tb[TCA_ABC_INTERVAL])
+		q->params.interval = usecs_to_jiffies(nla_get_u32(tb[TCA_ABC_INTERVAL]));
 
 	/* scaled ita */
 	if (tb[TCA_ABC_ITA])
@@ -155,17 +269,14 @@ static int abc_change(struct Qdisc *sch, struct nlattr *opt,
 	/* delta is in us */
 	if (tb[TCA_ABC_DELTA]) {
 		us = nla_get_u32(tb[TCA_ABC_DELTA]);
-		q->params.delta = PSCHED_NS2TICKS((u64)us * NSEC_PER_USEC);
+		q->params.delta = (u32)(us * NSEC_PER_USEC);
 	}
 
-	/* rqdelay is in us */
+	/* rqdelay in us is stored in ns */
 	if (tb[TCA_ABC_RQDELAY]) {
 		us = nla_get_u32(tb[TCA_ABC_RQDELAY]);
-		q->params.rqdelay = PSCHED_NS2TICKS((u64)us * NSEC_PER_USEC);
+		q->params.rqdelay = (u64)(us * NSEC_PER_USEC);
 	}
-
-	if (tb[TCA_ABC_TOKENS])
-		q->params.tokens = nla_get_u32(tb[TCA_ABC_TOKENS]);
 
 	/* Drop excess packets if new limit is lower */
 	qlen = sch->q.qlen;
@@ -182,27 +293,6 @@ static int abc_change(struct Qdisc *sch, struct nlattr *opt,
 	return 0;
 }
 
-static int abc_init(struct Qdisc *sch, struct nlattr *opt,
-		    struct netlink_ext_ack *extack)
-{
-	struct abc_sched_data *q = qdisc_priv(sch);
-	int err;
-
-	abc_params_init(&q->params);
-	abc_vars_init(&q->vars);
-	sch->limit = q->params.limit;
-
-	q->sch = sch;
-
-	if (opt) {
-		err = abc_change(sch, opt, extack);
-		if (err)
-			return err;
-	}
-
-	return 0;
-}
-
 static int abc_dump(struct Qdisc *sch, struct sk_buff *skb)
 {
 	struct abc_sched_data *q = qdisc_priv(sch);
@@ -212,12 +302,11 @@ static int abc_dump(struct Qdisc *sch, struct sk_buff *skb)
 		goto nla_put_failure;
 
 	if (nla_put_u32(skb, TCA_ABC_LIMIT, sch->limit) ||
-	    nla_put_u32(skb, TCA_ABC_BANDWIDTH, q->params.bandwidth) ||
-	    nla_put_u32(skb, TCA_ABC_INTERVAL, ((u32)PSCHED_TICKS2NS(q->params.interval)) / NSEC_PER_USEC) ||
+	    nla_put_u32(skb, TCA_ABC_BANDWIDTH, q->params.bandwidth >> 8) ||
+	    nla_put_u32(skb, TCA_ABC_INTERVAL, jiffies_to_usecs(q->params.interval)) ||
 	    nla_put_u32(skb, TCA_ABC_ITA, q->params.ita) ||
-	    nla_put_u32(skb, TCA_ABC_DELTA, ((u32)PSCHED_TICKS2NS(q->params.delta)) / NSEC_PER_USEC) ||
-	    nla_put_u32(skb, TCA_ABC_RQDELAY, ((u32)PSCHED_TICKS2NS(q->params.rqdelay)) / NSEC_PER_USEC) ||
-	    nla_put_u32(skb, TCA_ABC_TOKENS, q->params.tokens))
+	    nla_put_u32(skb, TCA_ABC_DELTA, (u32)(q->params.delta / NSEC_PER_USEC)) ||
+	    nla_put_u32(skb, TCA_ABC_RQDELAY, (u32)(q->params.rqdelay / NSEC_PER_USEC)))
 		goto nla_put_failure;
 
 	return nla_nest_end(skb, opts);
@@ -243,23 +332,6 @@ static int abc_dump_stats(struct Qdisc *sch, struct gnet_dump *d)
 	return gnet_stats_copy_app(d, &st, sizeof(st));
 }
 
-static struct sk_buff *abc_qdisc_dequeue(struct Qdisc *sch)
-{
-	struct abc_sched_data *q = qdisc_priv(sch);
-	u64 qdelay = 0ULL;
-	struct sk_buff *skb = qdisc_dequeue_head(sch);
-
-	if (unlikely(!skb))
-		return NULL;
-
-	/* >> 10 is approx /1000 */
-	qdelay = ((__force __u64)(ktime_get_real_ns() -
-				ktime_to_ns(skb_get_ktime(skb)))) >> 10;
-	q->stats.qdelay = qdelay;
-
-	return skb;
-}
-
 static void abc_reset(struct Qdisc *sch)
 {
 	struct abc_sched_data *q = qdisc_priv(sch);
@@ -272,7 +344,8 @@ static void abc_destroy(struct Qdisc *sch)
 {
 	struct abc_sched_data *q = qdisc_priv(sch);
 
-	q->params.interval = UINT_MAX;
+	q->params.interval = 0;
+	del_timer_sync(&q->adapt_timer);
 }
 
 static struct Qdisc_ops abc_qdisc_ops __read_mostly = {
