@@ -84,7 +84,7 @@ static void calculate_drain_rate(struct Qdisc *sch)
 		return;
 
 	/* calculate dq_rate in bytes per jiffies << ABC_SCALE */
-	count = count / q->params.interval;
+	count /= q->params.interval;
 
 	if (q->vars.dq_rate == 0)
 		q->vars.dq_rate = count;
@@ -138,7 +138,7 @@ out:
 static void abc_process_dequeue(struct Qdisc *sch, struct sk_buff *skb)
 {
 	struct abc_sched_data *q = qdisc_priv(sch);
-	u64 target_rate, ft;
+	u64 target_rate = 0ULL, ft = 0ULL;
 
 	if (q->params.rqdelay > q->stats.qdelay)
 		target_rate = q->params.rqdelay - q->stats.qdelay;
@@ -155,9 +155,13 @@ static void abc_process_dequeue(struct Qdisc *sch, struct sk_buff *skb)
 	/* At this point, target_rate = dqd is in bytes/jiffies 16-bit scaled */
 
 	//calculate f(t) using Eq 2.
-	do_div(target_rate, q->vars.dq_rate);
-	target_rate >>= 1;
-	ft = min_t(u64, ONE, target_rate);
+	if (q->vars.dq_rate) {
+		do_div(target_rate, q->vars.dq_rate);
+		target_rate >>= 1;
+		ft = min_t(u64, ONE, target_rate);
+	} else {
+		ft = ONE;
+	}
 
 	// token = min(token + f(t), tokenLimit);
 	q->vars.token += ft;
