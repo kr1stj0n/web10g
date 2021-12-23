@@ -203,8 +203,8 @@ static int abc_print_xstats(struct qdisc_util *qu, FILE *f,
 
 	st = RTA_DATA(xstats);
 
-	if (st->avg_rate)
-                print_uint(PRINT_ANY, "avg_rate", " avg_rate %u", st->avg_rate);
+	if (st->dq_rate)
+                print_uint(PRINT_ANY, "dq_rate", " dq_rate %u", st->dq_rate);
 
 	fprintf(f, " delay %lluus ", (unsigned long long) st->qdelay);
 

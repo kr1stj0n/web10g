@@ -110,29 +110,6 @@ static void abc_timer(struct timer_list *t)
 	spin_unlock(root_lock);
 }
 
-static int abc_init(struct Qdisc *sch, struct nlattr *opt,
-		    struct netlink_ext_ack *extack)
-{
-	struct abc_sched_data *q = qdisc_priv(sch);
-	int err;
-
-	abc_params_init(&q->params);
-	abc_vars_init(&q->vars);
-	sch->limit = q->params.limit;
-
-	q->sch = sch;
-	timer_setup(&q->adapt_timer, abc_timer, 0);
-
-	if (opt) {
-		err = abc_change(sch, opt, extack);
-		if (err)
-			return err;
-	}
-
-	mod_timer(&q->adapt_timer, jiffies + HZ / 2);
-	return 0;
-}
-
 static int abc_qdisc_enqueue(struct sk_buff *skb, struct Qdisc *sch,
 			     struct sk_buff **to_free)
 {
@@ -293,6 +270,29 @@ static int abc_change(struct Qdisc *sch, struct nlattr *opt,
 	return 0;
 }
 
+static int abc_init(struct Qdisc *sch, struct nlattr *opt,
+		    struct netlink_ext_ack *extack)
+{
+	struct abc_sched_data *q = qdisc_priv(sch);
+	int err;
+
+	abc_params_init(&q->params);
+	abc_vars_init(&q->vars);
+	sch->limit = q->params.limit;
+
+	q->sch = sch;
+	timer_setup(&q->adapt_timer, abc_timer, 0);
+
+	if (opt) {
+		err = abc_change(sch, opt, extack);
+		if (err)
+			return err;
+	}
+
+	mod_timer(&q->adapt_timer, jiffies + HZ / 2);
+	return 0;
+}
+
 static int abc_dump(struct Qdisc *sch, struct sk_buff *skb)
 {
 	struct abc_sched_data *q = qdisc_priv(sch);
@@ -320,7 +320,7 @@ static int abc_dump_stats(struct Qdisc *sch, struct gnet_dump *d)
 {
 	struct abc_sched_data *q = qdisc_priv(sch);
 	struct tc_abc_xstats st = {
-		.avg_rate	= q->vars.avg_rate,
+		.dq_rate	= q->vars.dq_rate,
 		.qdelay         = q->stats.qdelay,
 		.packets_in	= q->stats.packets_in,
 		.dropped	= q->stats.dropped,

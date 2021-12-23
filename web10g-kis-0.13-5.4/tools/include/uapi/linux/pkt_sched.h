@@ -1030,7 +1030,7 @@ enum {
 #define TCA_ABC_MAX   (__TCA_ABC_MAX - 1)
 
 struct tc_abc_xstats {
-	__u32 avg_rate;		/* current average rate */
+	__u32 dq_rate;		/* current draining queue rate */
 	__u64 qdelay;	        /* current queuing delay */
 	__u32 packets_in;	/* total number of packets enqueued */
 	__u32 dropped;		/* packets dropped due to shq_action */
