@@ -50,6 +50,7 @@ obj-$(CONFIG_TCP_CONG_BIC) += tcp_bic.o
 obj-$(CONFIG_TCP_CONG_CDG) += tcp_cdg.o
 obj-$(CONFIG_TCP_CONG_CUBIC) += tcp_cubic.o
 obj-$(CONFIG_TCP_CONG_DCTCP) += tcp_dctcp.o
+obj-$(CONFIG_TCP_CONG_ABC) += tcp_abc.o
 obj-$(CONFIG_TCP_CONG_LGC) += tcp_lgc.o
 tcp_lgc-y += tcp_lgc_main.o tcp_lgc_lut.o
 obj-$(CONFIG_TCP_CONG_WESTWOOD) += tcp_westwood.o

@@ -75,6 +75,12 @@ static void abc_vars_init(struct abc_vars *vars)
 	vars->dq_rate  = 0U;
 }
 
+/* Was this packet marked by Explicit Congestion Notification? */
+static int abc_v4_is_ce(const struct sk_buff *skb)
+{
+	return INET_ECN_is_ce(ip_hdr(skb)->tos);
+}
+
 static void calculate_drain_rate(struct Qdisc *sch)
 {
 	struct abc_sched_data *q = qdisc_priv(sch);
@@ -167,7 +173,7 @@ static void abc_process_dequeue(struct Qdisc *sch, struct sk_buff *skb)
 	q->vars.token += ft;
 	q->vars.token = min_t(u64, q->vars.token, TOKEN_LIMIT);
 
-	if (q->vars.token > ONE) {
+	if (q->vars.token > ONE && !abc_v4_is_ce(skb)) {
 		q->vars.token -= ONE;
 	} else {
 		if (INET_ECN_set_ce(skb)) {
