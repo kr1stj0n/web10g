@@ -241,7 +241,7 @@ static void lgc_set_cwnd(struct sock *sk)
 	target_cwnd >>= LGC_SHIFT;
 	do_div(target_cwnd, tp->mss_cache * USEC_PER_MSEC);
 
-	tp->snd_cwnd = max_t(u32, (u32)target_cwnd, 2U);
+	tp->snd_cwnd = max_t(u32, (u32)target_cwnd + 1, 2U);
 	/* Add a small gain to avoid truncation in bandwidth */
 	tp->snd_cwnd <<= 1;
 

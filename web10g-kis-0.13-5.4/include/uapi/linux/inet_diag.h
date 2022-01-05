@@ -145,6 +145,7 @@ enum {
 
 	INET_DIAG_DCTCPINFO,	/* request as INET_DIAG_VEGASINFO */
 	INET_DIAG_LGCINFO,	/* request as INET_DIAG_VEGASINFO */
+	INET_DIAG_ABCINFO,	/* request as INET_DIAG_VEGASINFO */
 	INET_DIAG_PROTOCOL,	/* response attribute only */
 	INET_DIAG_SKV6ONLY,
 	INET_DIAG_LOCALS,
@@ -205,6 +206,16 @@ struct tcp_lgc_info {
 	__u32	lgc_ab_tot;
 };
 
+/* INET_DIAG_ABCINFO */
+
+struct tcp_abc_info {
+	__u16	abc_enabled;
+	__u16	abc_ce_state;
+	__u64	abc_rate;
+	__u32	abc_ab_ecn;
+	__u32	abc_ab_tot;
+};
+
 /* INET_DIAG_BBRINFO */
 
 struct tcp_bbr_info {
@@ -220,6 +231,7 @@ union tcp_cc_info {
 	struct tcpvegas_info	vegas;
 	struct tcp_dctcp_info	dctcp;
 	struct tcp_lgc_info	lgc;
+	struct tcp_abc_info	abc;
 	struct tcp_bbr_info	bbr;
 };
 #endif /* _UAPI_INET_DIAG_H_ */
