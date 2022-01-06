@@ -89,6 +89,19 @@ build_modules() {
          sudo modprobe tcp_dctcp"
 
     #eval $CMD
+
+    # TCP_ABC
+    CMD="sudo sysctl net.ipv4.tcp_congestion_control=cubic;
+         sudo rmmod -f tcp_abc;
+         cp Makefile.abc ../../net/ipv4/Makefile;
+         cd ../../ && make modules_prepare && make M=net/ipv4/ clean && make M=net/ipv4/ modules && sudo make M=net/ipv4/ modules_install;
+         sudo depmod -a;
+         sudo cp /lib/modules/5.4.0/extra/tcp_abc.ko /lib/modules/5.4.0/kernel/net/ipv4/;
+         sudo depmod -a;
+         cp tools/net_modules/Makefile.ipv4.init net/ipv4/Makefile;
+         sudo modprobe tcp_abc"
+
+    #eval $CMD
 }
 
 #build_stack
