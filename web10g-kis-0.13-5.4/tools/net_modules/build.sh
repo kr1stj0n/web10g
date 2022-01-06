@@ -54,7 +54,7 @@ build_modules() {
 
     # SCH_ABC
     CMD="sudo rmmod -f sch_abc;
-         cp Makefile.abc ../../net/sched/Makefile;
+         cp Makefile.sched.abc ../../net/sched/Makefile;
          cd ../../ && make modules_prepare && make M=net/sched/ clean && make M=net/sched/ modules && sudo make M=net/sched/ modules_install;
          sudo depmod -a;
          sudo cp /lib/modules/5.4.0/extra/sch_abc.ko /lib/modules/5.4.0/kernel/net/sched/;
@@ -93,7 +93,7 @@ build_modules() {
     # TCP_ABC
     CMD="sudo sysctl net.ipv4.tcp_congestion_control=cubic;
          sudo rmmod -f tcp_abc;
-         cp Makefile.abc ../../net/ipv4/Makefile;
+         cp Makefile.cc.abc ../../net/ipv4/Makefile;
          cd ../../ && make modules_prepare && make M=net/ipv4/ clean && make M=net/ipv4/ modules && sudo make M=net/ipv4/ modules_install;
          sudo depmod -a;
          sudo cp /lib/modules/5.4.0/extra/tcp_abc.ko /lib/modules/5.4.0/kernel/net/ipv4/;

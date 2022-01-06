@@ -3,5 +3,4 @@
 # Makefile for the Linux Traffic Control Unit.
 #
 
-obj-$(CONFIG_NET_SCH_ABC)	+= sch_abc.o
 obj-$(CONFIG_TCP_CONG_ABC) += tcp_abc.o
