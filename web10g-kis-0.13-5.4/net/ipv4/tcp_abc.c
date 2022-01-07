@@ -151,10 +151,9 @@ void tcp_abc_cong_control(struct sock *sk, const struct rate_sample *rs)
 
 static void abc_check_ece(struct sock *sk, u32 flags)
 {
-	const struct tcp_sock *tp = tcp_sk(sk);
 	struct abc *ca = inet_csk_ca(sk);
 
-	if (flags & CA_ACK_CE)
+	if (flags & CA_ACK_ECE)
 		ca->ece = 1;
 	else
 		ca->ece = 0;
