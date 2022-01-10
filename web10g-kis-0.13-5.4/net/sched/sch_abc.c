@@ -72,7 +72,7 @@ static void abc_vars_init(struct abc_vars *vars)
 {
 	vars->token = 0ULL;
 	vars->dq_count = 0ULL;
-	vars->dq_rate  = 0U;
+	vars->dq_rate = 0U;
 }
 
 /* Was this packet marked by Explicit Congestion Notification? */
@@ -84,20 +84,24 @@ static int abc_v4_is_ce(const struct sk_buff *skb)
 static void calculate_drain_rate(struct Qdisc *sch)
 {
 	struct abc_sched_data *q = qdisc_priv(sch);
-	u32 count = q->vars.dq_count << ABC_SCALE;
+	u64 count64 = (u64)q->vars.dq_count;
+	u32 count32 = 0U;
+	count64 <<= 8;
 
 	if (!q->params.interval)
 		return;
 
-	/* calculate dq_rate in bytes per jiffies << ABC_SCALE */
-	count /= q->params.interval;
+	/* calculate dq_rate in bytes per jiffies << 8 */
+	do_div(count64, q->params.interval);
+	count32 = (u32)count64;
 
 	if (q->vars.dq_rate == 0)
-		q->vars.dq_rate = count;
+		q->vars.dq_rate = count32;
 	else
 		q->vars.dq_rate =
-			(q->vars.dq_rate - (q->vars.dq_rate >> 3)) + (count >> 3);
+			(q->vars.dq_rate - (q->vars.dq_rate >> 3)) + (count32 >> 3);
 
+	/* Reset dq_count every interval */
 	q->vars.dq_count = 0U;
 }
 
@@ -158,7 +162,8 @@ static void abc_process_dequeue(struct Qdisc *sch, struct sk_buff *skb)
 
 	target_rate *= q->params.bandwidth;
 
-	/* At this point, target_rate = dqd is in bytes/jiffies 16-bit scaled */
+	/* At this point, target_rate is in bytes/jiffies 24-bit scaled */
+	target_rate <<= 8;
 
 	//calculate f(t) using Eq 2.
 	if (q->vars.dq_rate) {
@@ -224,14 +229,13 @@ static int abc_change(struct Qdisc *sch, struct nlattr *opt,
 	if (!opt)
 		return -EINVAL;
 
-	err = nla_parse_nested_deprecated(tb, TCA_ABC_MAX, opt, abc_policy,
-			NULL);
+	err = nla_parse_nested_deprecated(tb, TCA_ABC_MAX, opt, abc_policy, NULL);
 	if (err < 0)
 		return err;
 
 	sch_tree_lock(sch);
 
-	/* limit */
+	/* limit in packets */
 	if (tb[TCA_ABC_LIMIT]) {
 		u32 limit = nla_get_u32(tb[TCA_ABC_LIMIT]);
 
@@ -239,7 +243,7 @@ static int abc_change(struct Qdisc *sch, struct nlattr *opt,
 		sch->limit = limit;
 	}
 
-	/* bandwidth */
+	/* bandwidth in bps << 8 */
 	if (tb[TCA_ABC_BANDWIDTH]) {
 		bw = nla_get_u32(tb[TCA_ABC_BANDWIDTH]);
 		q->params.bandwidth = bw << 8;
@@ -249,11 +253,11 @@ static int abc_change(struct Qdisc *sch, struct nlattr *opt,
 	if (tb[TCA_ABC_INTERVAL])
 		q->params.interval = usecs_to_jiffies(nla_get_u32(tb[TCA_ABC_INTERVAL]));
 
-	/* scaled ita */
+	/* ita << 8 */
 	if (tb[TCA_ABC_ITA])
 		q->params.ita = nla_get_u32(tb[TCA_ABC_ITA]);
 
-	/* delta is in us */
+	/* delta in us is stored in ns */
 	if (tb[TCA_ABC_DELTA]) {
 		us = nla_get_u32(tb[TCA_ABC_DELTA]);
 		q->params.delta = (u32)(us * NSEC_PER_USEC);

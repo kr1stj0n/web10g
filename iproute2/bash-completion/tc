@@ -331,7 +331,7 @@ _tc_qdisc_options()
             return 0
             ;;
         abc)
-            _tc_once_attr 'limit bandwidth interval ita delta qdelay tokens'
+            _tc_once_attr 'limit bandwidth interval ita delta rqdelay'
             return 0
             ;;
         hull)
