@@ -318,7 +318,7 @@ static int abc_dump(struct Qdisc *sch, struct sk_buff *skb)
 		goto nla_put_failure;
 
 	if (nla_put_u32(skb, TCA_ABC_LIMIT, sch->limit) ||
-	    nla_put_u32(skb, TCA_ABC_BANDWIDTH, q->params.bandwidth >> 8) ||
+	    nla_put_u32(skb, TCA_ABC_BANDWIDTH, (q->params.bandwidth >> 8) * msecs_to_jiffies(MSEC_PER_SEC)) ||
 	    nla_put_u32(skb, TCA_ABC_INTERVAL, jiffies_to_usecs(q->params.interval)) ||
 	    nla_put_u32(skb, TCA_ABC_ITA, q->params.ita) ||
 	    nla_put_u32(skb, TCA_ABC_DELTA, (u32)(q->params.delta / NSEC_PER_USEC)) ||
