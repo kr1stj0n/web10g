@@ -139,6 +139,7 @@ static int abc_qdisc_enqueue(struct sk_buff *skb, struct Qdisc *sch,
 	 * * the queuing delay in the dequeue process.
 	 * */
 	__net_timestamp(skb);
+
 	return qdisc_enqueue_tail(skb, sch);
 out:
 	q->stats.dropped++;
@@ -243,13 +244,14 @@ static int abc_change(struct Qdisc *sch, struct nlattr *opt,
 		sch->limit = limit;
 	}
 
-	/* bandwidth in bps << 8 */
+	/* bandwidth in bps stored in bytes per jiffies << 8 */
 	if (tb[TCA_ABC_BANDWIDTH]) {
 		bw = nla_get_u32(tb[TCA_ABC_BANDWIDTH]);
+		bw /= msecs_to_jiffies(MSEC_PER_SEC);
 		q->params.bandwidth = bw << 8;
 	}
 
-	/* interval is in jiffies */
+	/* interval in us is stored in jiffies */
 	if (tb[TCA_ABC_INTERVAL])
 		q->params.interval = usecs_to_jiffies(nla_get_u32(tb[TCA_ABC_INTERVAL]));
 
@@ -334,6 +336,7 @@ static int abc_dump_stats(struct Qdisc *sch, struct gnet_dump *d)
 {
 	struct abc_sched_data *q = qdisc_priv(sch);
 	struct tc_abc_xstats st = {
+		/* TODO: unscale dq_rate to report the correct value */
 		.dq_rate	= q->vars.dq_rate,
 		.qdelay         = q->stats.qdelay,
 		.packets_in	= q->stats.packets_in,
