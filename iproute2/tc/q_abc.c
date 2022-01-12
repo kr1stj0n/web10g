@@ -148,19 +148,19 @@ static int abc_print_opt(struct qdisc_util *qu, FILE *f, struct rtattr *opt)
 
 	parse_rtattr_nested(tb, TCA_ABC_MAX, opt);
 
-	/* limit */
+	/* limit in packets */
 	if (tb[TCA_ABC_LIMIT] &&
             RTA_PAYLOAD(tb[TCA_ABC_LIMIT]) >= sizeof(__u32)) {
 		limit = rta_getattr_u32(tb[TCA_ABC_LIMIT]);
 		fprintf(f, "limit %up ", limit);
 	}
-	/* bandwidth */
+	/* bandwidth stored in bps */
 	if (tb[TCA_ABC_BANDWIDTH] &&
             RTA_PAYLOAD(tb[TCA_ABC_BANDWIDTH]) >= sizeof(__u32)) {
 		bw = rta_getattr_u32(tb[TCA_ABC_BANDWIDTH]);
 		fprintf(f, "bandwidth %s ", sprint_rate(bw, b1));
 	}
-	/* interval */
+	/* interval stored in us */
 	if (tb[TCA_ABC_INTERVAL] &&
             RTA_PAYLOAD(tb[TCA_ABC_INTERVAL]) >= sizeof(__u32)) {
 		interval = rta_getattr_u32(tb[TCA_ABC_INTERVAL]);
@@ -174,13 +174,13 @@ static int abc_print_opt(struct qdisc_util *qu, FILE *f, struct rtattr *opt)
 			print_float(PRINT_ANY, "ita", "ita %lg ",
                                     ita / pow(2, ABC_SCALE));
 	}
-	/* delta */
+	/* delta stored in us */
 	if (tb[TCA_ABC_DELTA] &&
             RTA_PAYLOAD(tb[TCA_ABC_DELTA]) >= sizeof(__u32)) {
 		delta = rta_getattr_u32(tb[TCA_ABC_DELTA]);
 		print_string(PRINT_FP, NULL, "delta %s ", sprint_time(delta, b1));
 	}
-	/* rqdelay */
+	/* rqdelay stored in us */
 	if (tb[TCA_ABC_RQDELAY] &&
             RTA_PAYLOAD(tb[TCA_ABC_RQDELAY]) >= sizeof(__u32)) {
 		rqdelay = rta_getattr_u32(tb[TCA_ABC_RQDELAY]);
@@ -204,16 +204,16 @@ static int abc_print_xstats(struct qdisc_util *qu, FILE *f,
 	st = RTA_DATA(xstats);
 
 	if (st->dq_rate)
-                print_uint(PRINT_ANY, "dq_rate", " dq_rate %u", st->dq_rate);
+                print_uint(PRINT_ANY, "dq_rate", "dq_rate %u ", st->dq_rate);
 
-	fprintf(f, " delay %lluus ", (unsigned long long) st->qdelay);
+	fprintf(f, "delay %lluus ", (unsigned long long) (st->qdelay / NSEC_PER_USEC));
 
 	print_nl();
-	print_uint(PRINT_ANY, "packets_in", " packets_in %u", st->packets_in);
-	print_uint(PRINT_ANY, "dropped", " dropped %u", st->dropped);
-        print_uint(PRINT_ANY, "overlimit", " overlimit %u", st->overlimit);
-	print_uint(PRINT_ANY, "maxq", " maxq %hu", st->maxq);
-	print_uint(PRINT_ANY, "ecn_mark", " ecn_mark %u", st->ecn_mark);
+	print_uint(PRINT_ANY, "packets_in", "packets_in %u ", st->packets_in);
+	print_uint(PRINT_ANY, "dropped", "dropped %u ", st->dropped);
+        print_uint(PRINT_ANY, "overlimit", "overlimit %u ", st->overlimit);
+	print_uint(PRINT_ANY, "maxq", "maxq %hu ", st->maxq);
+	print_uint(PRINT_ANY, "ecn_mark", "ecn_mark %u", st->ecn_mark);
 
 	return 0;
 }
