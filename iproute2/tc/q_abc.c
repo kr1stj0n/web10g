@@ -184,7 +184,7 @@ static int abc_print_opt(struct qdisc_util *qu, FILE *f, struct rtattr *opt)
 	if (tb[TCA_ABC_RQDELAY] &&
             RTA_PAYLOAD(tb[TCA_ABC_RQDELAY]) >= sizeof(__u32)) {
 		rqdelay = rta_getattr_u32(tb[TCA_ABC_RQDELAY]);
-		print_string(PRINT_FP, NULL, "rqdelay %s ", sprint_time(rqdelay, b1));
+		print_string(PRINT_FP, NULL, "refqd %s ", sprint_time(rqdelay, b1));
 	}
 
 	return 0;

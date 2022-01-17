@@ -101,10 +101,14 @@ install.packages("ggplot2")
 
 ```bash
 git clone https://bitbucket.org/caia-swin/spp.git
+cd spp
+make all
+sudo make install
+
 sudo apt-get install libpcap-dev
 pip install pexpect==3.2
 
-apt-get install psmisc
+sudo apt install psmisc
 cp nttcp /usr/local/bin/
 
 sudo apt install ntp
