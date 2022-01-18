@@ -4,7 +4,7 @@
 # Written by: Kr1stj0n C1k0 <kristjoc@ifi.uio.no>
 #
 
-GIT_ROOT=`git rev-parse --show-top-level`
+GIT_ROOT=`git rev-parse --show-toplevel`
 MY_BUILD_DIR=`pwd`
 MY_KERN_DIR="$GIT_ROOT/web10g-kis-0.13-5.4/"
 MY_SCHED_DIR="$GIT_ROOT/web10g-kis-0.13-5.4/net/sched/"

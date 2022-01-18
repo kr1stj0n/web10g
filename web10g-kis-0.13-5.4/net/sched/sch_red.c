@@ -119,7 +119,7 @@ static struct sk_buff *red_dequeue(struct Qdisc *sch)
 	struct sk_buff *skb;
 	struct red_sched_data *q = qdisc_priv(sch);
 	struct Qdisc *child = q->qdisc;
-        u64 qdelay = 0;
+        u64 qdelay = 0ULL;
 
 	skb = child->dequeue(child);
 	if (skb) {
