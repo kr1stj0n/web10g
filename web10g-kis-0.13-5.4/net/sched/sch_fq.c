@@ -117,6 +117,7 @@ struct fq_sched_data {
 	u64		stat_gc_flows;
 	u64		stat_internal_packets;
 	u64		stat_throttled;
+	u64		stat_qdelay;
 	u64		stat_ce_mark;
 	u64		stat_flows_plimit;
 	u64		stat_pkts_too_long;
@@ -604,7 +605,7 @@ out:
 	/* >> 10 is approx /1000 */
 	qdelay = ((__force __u64)(ktime_get_real_ns() -
 			ktime_to_ns(skb_get_ktime(skb)))) >> 10;
-	q->stats.qdelay = qdelay;
+	q->stat_qdelay = qdelay;
 
 	qdisc_bstats_update(sch, skb);
 	return skb;
@@ -962,6 +963,7 @@ static int fq_dump_stats(struct Qdisc *sch, struct gnet_dump *d)
 	st.throttled_flows	  = q->throttled_flows;
 	st.unthrottle_latency_ns  = min_t(unsigned long,
 					  q->unthrottle_latency_ns, ~0U);
+	st.qdelay		  = q->stat_qdelay;
 	st.ce_mark		  = q->stat_ce_mark;
 	sch_tree_unlock(sch);
 
