@@ -442,6 +442,11 @@ static int fq_enqueue(struct sk_buff *skb, struct Qdisc *sch,
 		q->inactive_flows--;
 	}
 
+	/* Timestamp the packet in order to calculate
+	 * * the queuing delay in the dequeue process.
+	 * */
+	__net_timestamp(skb);
+
 	/* Note: this overwrites f->age */
 	flow_queue_add(f, skb);
 
@@ -487,8 +492,8 @@ static struct sk_buff *fq_dequeue(struct Qdisc *sch)
 	struct sk_buff *skb;
 	struct fq_flow *f;
 	unsigned long rate;
+	u64 now, qdelay = 0ULL;
 	u32 plen;
-	u64 now;
 
 	if (!sch->q.qlen)
 		return NULL;
@@ -596,6 +601,11 @@ begin:
 		f->time_next_packet = now + len;
 	}
 out:
+	/* >> 10 is approx /1000 */
+	qdelay = ((__force __u64)(ktime_get_real_ns() -
+			ktime_to_ns(skb_get_ktime(skb)))) >> 10;
+	q->stats.qdelay = qdelay;
+
 	qdisc_bstats_update(sch, skb);
 	return skb;
 }
