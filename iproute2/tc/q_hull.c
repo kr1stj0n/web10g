@@ -172,7 +172,7 @@ static int hull_print_xstats(struct qdisc_util *qu, FILE *f,
 	if (st->avg_rate)
 		print_uint(PRINT_ANY, "avg_rate", " avg_rate %u", st->avg_rate);
 
-	fprintf(f, " delay %fus", (double) (st->qdelay / NSEC_PER_USEC));
+	fprintf(f, " delay %fus", (double)st->qdelay / NSEC_PER_USEC);
 
 	print_nl();
 	print_uint(PRINT_ANY, "packets_in", " packets_in %u ", st->packets_in);
