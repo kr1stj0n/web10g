@@ -365,7 +365,7 @@ static int fq_print_xstats(struct qdisc_util *qu, FILE *f,
 	if (st->unthrottle_latency_ns)
 		fprintf(f, ", %u ns latency", st->unthrottle_latency_ns);
 
-	fprintf(f, " delay %lluus", (unsigned long long) (st->qdelay / NSEC_PER_USEC));
+	fprintf(f, " delay %fus", (double) (st->qdelay / NSEC_PER_USEC));
 
 	if (st->ce_mark)
 		fprintf(f, ", %llu ce_mark", st->ce_mark);

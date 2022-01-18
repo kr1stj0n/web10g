@@ -220,7 +220,7 @@ static int red_print_xstats(struct qdisc_util *qu, FILE *f, struct rtattr *xstat
 	print_uint(PRINT_ANY, "marked", " marked %u ", st->marked);
 	print_uint(PRINT_ANY, "early", "early %u ", st->early);
 	print_uint(PRINT_ANY, "pdrop", "pdrop %u ", st->pdrop);
-	fprintf(f, "delay %lluus ", (unsigned long long) (st->qdelay / NSEC_PER_USEC));
+	fprintf(f, "delay %fus ", (double) (st->qdelay / NSEC_PER_USEC));
 	print_uint(PRINT_ANY, "other", "other %u", st->other);
 #endif
 	return 0;
