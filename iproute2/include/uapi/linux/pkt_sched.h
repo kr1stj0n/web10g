@@ -940,7 +940,6 @@ struct tc_fq_qd_stats {
 	__u32	inactive_flows;
 	__u32	throttled_flows;
 	__u32	unthrottle_latency_ns;
-	__u64	qdelay;           	/* current queuing delay */
 	__u64	ce_mark;		/* packets above ce_threshold */
 };
 
