@@ -54,7 +54,7 @@ static void explain(void)
 		"Usage: ... fq	[ limit PACKETS ] [ flow_limit PACKETS ]\n"
 		"		[ quantum BYTES ] [ initial_quantum BYTES ]\n"
 		"		[ maxrate RATE  ] [ buckets NUMBER ]\n"
-		"		[ [no]pacing ] [ refill_delay TIME ]\n"
+		"		[ [no]pacing ] [ refill_dlay TIME ]\n"
 		"		[ low_rate_threshold RATE ]\n"
 		"		[ orphan_mask MASK]\n"
 		"		[ ce_threshold TIME ]\n");
@@ -179,10 +179,10 @@ static int fq_parse_opt(struct qdisc_util *qu, int argc, char **argv,
 				return -1;
 			}
 			set_orphan_mask = true;
-		} else if (strcmp(*argv, "refill_delay") == 0) {
+		} else if (strcmp(*argv, "refill_dlay") == 0) {
 			NEXT_ARG();
 			if (get_time(&refill_delay, *argv)) {
-				fprintf(stderr, "Illegal \"refill_delay\"\n");
+				fprintf(stderr, "Illegal \"refill_dlay\"\n");
 				return -1;
 			}
 			set_refill_delay = true;
@@ -322,7 +322,7 @@ static int fq_print_opt(struct qdisc_util *qu, FILE *f, struct rtattr *opt)
 	if (tb[TCA_FQ_FLOW_REFILL_DELAY] &&
 	    RTA_PAYLOAD(tb[TCA_FQ_FLOW_REFILL_DELAY]) >= sizeof(__u32)) {
 		refill_delay = rta_getattr_u32(tb[TCA_FQ_FLOW_REFILL_DELAY]);
-		fprintf(f, "refill_delay %s ", sprint_time(refill_delay, b1));
+		fprintf(f, "refill_dlay %s ", sprint_time(refill_delay, b1));
 	}
 
 	if (tb[TCA_FQ_CE_THRESHOLD] &&
@@ -352,7 +352,7 @@ static int fq_print_xstats(struct qdisc_util *qu, FILE *f,
 		st->flows, st->inactive_flows, st->throttled_flows);
 
 	if (st->time_next_delayed_flow > 0)
-		fprintf(f, ", next packet delay %llu ns", st->time_next_delayed_flow);
+		fprintf(f, ", next packet dlay %llu ns", st->time_next_delayed_flow);
 
 	fprintf(f, "\n  %llu gc, %llu highprio",
 		st->gc_flows, st->highprio_packets);
@@ -360,7 +360,8 @@ static int fq_print_xstats(struct qdisc_util *qu, FILE *f,
 	if (st->tcp_retrans)
 		fprintf(f, ", %llu retrans", st->tcp_retrans);
 
-	fprintf(f, ", %llu throttled", st->throttled);
+	/* fprintf(f, ", %llu throttled", st->throttled); */
+	fprintf(f, ", delay %fus", (double)st->throttled / NSEC_PER_USEC);
 
 	if (st->unthrottle_latency_ns)
 		fprintf(f, ", %u ns latency", st->unthrottle_latency_ns);

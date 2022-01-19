@@ -177,7 +177,7 @@ static void fq_flow_set_throttled(struct fq_sched_data *q, struct fq_flow *f)
 	rb_link_node(&f->rate_node, parent, p);
 	rb_insert_color(&f->rate_node, &q->delayed);
 	q->throttled_flows++;
-	q->stat_throttled++;
+	/* q->stat_throttled++; */
 
 	f->next = &throttled;
 	if (q->time_next_delayed_flow > f->time_next_packet)
@@ -445,6 +445,11 @@ static int fq_enqueue(struct sk_buff *skb, struct Qdisc *sch,
 	/* Note: this overwrites f->age */
 	flow_queue_add(f, skb);
 
+	/* Timestamp the packet in order to calculate
+	 * * the queuing delay in the dequeue process.
+	 * */
+	__net_timestamp(skb);
+
 	if (unlikely(f == &q->internal)) {
 		q->stat_internal_packets++;
 	}
@@ -488,7 +493,7 @@ static struct sk_buff *fq_dequeue(struct Qdisc *sch)
 	struct fq_flow *f;
 	unsigned long rate;
 	u32 plen;
-	u64 now;
+	u64 now, qdlay = 0ULL;
 
 	if (!sch->q.qlen)
 		return NULL;
@@ -596,6 +601,10 @@ begin:
 		f->time_next_packet = now + len;
 	}
 out:
+	/* >> 10 is approx /1000 */
+	qdlay = ((__force __u64)(ktime_get_real_ns() -
+				 ktime_to_ns(skb_get_ktime(skb)))) >> 10;
+	q->stat_throttled = qdlay;
 	qdisc_bstats_update(sch, skb);
 	return skb;
 }
