@@ -117,7 +117,6 @@ struct fq_sched_data {
 	u64		stat_gc_flows;
 	u64		stat_internal_packets;
 	u64		stat_throttled;
-	u64		stat_qdelay;
 	u64		stat_ce_mark;
 	u64		stat_flows_plimit;
 	u64		stat_pkts_too_long;
