@@ -35,7 +35,7 @@ static void explain(void)
 {
 	fprintf(stderr,
 		"Usage: ... abc [ limit PACKETS ] [bandwidth BPS][ interval MS ]\n"
-		"               [ ita ] [ delta MS ] [rqdelay MS]\n");
+		"               [ ita ] [ delta MS ] [refqd MS]\n");
 }
 
 static int abc_parse_opt(struct qdisc_util *qu, int argc, char **argv,
@@ -46,7 +46,7 @@ static int abc_parse_opt(struct qdisc_util *qu, int argc, char **argv,
 	unsigned int interval = 10000;		/* default: 10ms in usecs */
         double       ita      = 1.0;
         unsigned int delta    = 10000;		/* at least bigger than maxRTT */
-	unsigned int rqdelay  = 50000;		/* default: 50ms in usecs */
+	unsigned int refqd    = 50000;		/* default: 50ms in usecs */
         __u32        sc_ita;
 	struct rtattr *tail;
 
@@ -87,10 +87,10 @@ static int abc_parse_opt(struct qdisc_util *qu, int argc, char **argv,
 				fprintf(stderr, "Illegal \"delta\"\n");
 				return -1;
 				}
-		} else if (strcmp(*argv, "rqdelay") == 0) {
+		} else if (strcmp(*argv, "refqd") == 0) {
 			NEXT_ARG();
-			if (get_time(&rqdelay, *argv)) {
-				fprintf(stderr, "Illegal \"rqdelay\"\n");
+			if (get_time(&refqd, *argv)) {
+				fprintf(stderr, "Illegal \"refqd\"\n");
 				return -1;
 				}
 		} else if (strcmp(*argv, "help") == 0) {
@@ -123,8 +123,8 @@ static int abc_parse_opt(struct qdisc_util *qu, int argc, char **argv,
 	if (delta)
 		addattr_l(n, 1024, TCA_ABC_DELTA, &delta, sizeof(delta));
 
-	if (rqdelay)
-		addattr_l(n, 1024, TCA_ABC_RQDELAY, &rqdelay, sizeof(rqdelay));
+	if (refqd)
+		addattr_l(n, 1024, TCA_ABC_REFQD, &refqd, sizeof(refqd));
 
 	addattr_nest_end(n, tail);
 
@@ -139,7 +139,7 @@ static int abc_print_opt(struct qdisc_util *qu, FILE *f, struct rtattr *opt)
 	unsigned int interval;
 	unsigned int ita;
 	unsigned int delta;
-	unsigned int rqdelay;
+	unsigned int refqd;
 
 	SPRINT_BUF(b1);
 
@@ -180,11 +180,11 @@ static int abc_print_opt(struct qdisc_util *qu, FILE *f, struct rtattr *opt)
 		delta = rta_getattr_u32(tb[TCA_ABC_DELTA]);
 		print_string(PRINT_FP, NULL, "delta %s ", sprint_time(delta, b1));
 	}
-	/* rqdelay stored in us */
-	if (tb[TCA_ABC_RQDELAY] &&
-            RTA_PAYLOAD(tb[TCA_ABC_RQDELAY]) >= sizeof(__u32)) {
-		rqdelay = rta_getattr_u32(tb[TCA_ABC_RQDELAY]);
-		print_string(PRINT_FP, NULL, "refqd %s ", sprint_time(rqdelay, b1));
+	/* ref. queueing delay stored in us */
+	if (tb[TCA_ABC_REFQD] &&
+            RTA_PAYLOAD(tb[TCA_ABC_REFQD]) >= sizeof(__u32)) {
+		refqd = rta_getattr_u32(tb[TCA_ABC_REFQD]);
+		print_string(PRINT_FP, NULL, "refqd %s ", sprint_time(refqd, b1));
 	}
 
 	return 0;

@@ -27,7 +27,7 @@ struct abc_params {
 	u32 interval;		/* interval frequency (in jiffies) */
 	u32 ita;		/* ita value [0,1] << 8 */
 	u32 delta;		/* user specified delta stored in ns */
-	u64 rqdelay;		/* reference queuing delay in ns */
+	u64 refqd;		/* reference queuing delay in ns */
 };
 
 /* variables used */
@@ -65,7 +65,7 @@ static void abc_params_init(struct abc_params *params)
 	params->interval = usecs_to_jiffies(10 * USEC_PER_MSEC); /* 10 ms */
 	params->ita = 1U;
 	params->delta = (u32)(10 * NSEC_PER_MSEC);	/* 10ms */
-	params->rqdelay = (u64)(10 * NSEC_PER_MSEC);	/* 10ms */
+	params->refqd = (u64)(10 * NSEC_PER_MSEC);	/* 10ms */
 }
 
 static void abc_vars_init(struct abc_vars *vars)
@@ -151,10 +151,10 @@ static void abc_process_dequeue(struct Qdisc *sch, struct sk_buff *skb)
 	struct abc_sched_data *q = qdisc_priv(sch);
 	u64 target_rate = 0ULL, ft = 0ULL;
 
-	if (q->params.rqdelay > q->stats.qdelay)
-		target_rate = q->params.rqdelay - q->stats.qdelay;
+	if (q->params.refqd > q->stats.qdelay)
+		target_rate = q->params.refqd - q->stats.qdelay;
 	else
-		target_rate = q->stats.qdelay - q->params.rqdelay;
+		target_rate = q->stats.qdelay - q->params.refqd;
 
 	target_rate <<= 8;
 	do_div(target_rate, q->params.delta);
@@ -216,7 +216,7 @@ static const struct nla_policy abc_policy[TCA_ABC_MAX + 1] = {
 	[TCA_ABC_INTERVAL]  = {.type = NLA_U32},
 	[TCA_ABC_ITA]       = {.type = NLA_U32},
 	[TCA_ABC_DELTA]     = {.type = NLA_U32},
-	[TCA_ABC_RQDELAY]   = {.type = NLA_U32},
+	[TCA_ABC_REFQD]   = {.type = NLA_U32},
 };
 
 static int abc_change(struct Qdisc *sch, struct nlattr *opt,
@@ -265,10 +265,10 @@ static int abc_change(struct Qdisc *sch, struct nlattr *opt,
 		q->params.delta = (u32)(us * NSEC_PER_USEC);
 	}
 
-	/* rqdelay in us is stored in ns */
-	if (tb[TCA_ABC_RQDELAY]) {
-		us = nla_get_u32(tb[TCA_ABC_RQDELAY]);
-		q->params.rqdelay = (u64)(us * NSEC_PER_USEC);
+	/* ref. queuing delay in us is stored in ns */
+	if (tb[TCA_ABC_REFQD]) {
+		us = nla_get_u32(tb[TCA_ABC_REFQD]);
+		q->params.refqd = (u64)(us * NSEC_PER_USEC);
 	}
 
 	/* Drop excess packets if new limit is lower */
@@ -322,7 +322,7 @@ static int abc_dump(struct Qdisc *sch, struct sk_buff *skb)
 	    nla_put_u32(skb, TCA_ABC_INTERVAL, jiffies_to_usecs(q->params.interval)) ||
 	    nla_put_u32(skb, TCA_ABC_ITA, q->params.ita) ||
 	    nla_put_u32(skb, TCA_ABC_DELTA, (u32)(q->params.delta / NSEC_PER_USEC)) ||
-	    nla_put_u32(skb, TCA_ABC_RQDELAY, (u32)(q->params.rqdelay / NSEC_PER_USEC)))
+	    nla_put_u32(skb, TCA_ABC_REFQD, (u32)(q->params.refqd / NSEC_PER_USEC)))
 		goto nla_put_failure;
 
 	return nla_nest_end(skb, opts);
