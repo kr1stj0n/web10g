@@ -151,7 +151,7 @@ static void abc_process_dequeue(struct Qdisc *sch, struct sk_buff *skb)
 	struct abc_sched_data *q = qdisc_priv(sch);
 	u64 target_rate = 0ULL, diff = 0ULL, ft = 0ULL;
 
-	if (q->stats.qdelay <= q.params.refqd) {
+	if (q->stats.qdelay <= q->params.refqd) {
 		target_rate = (u64)q->params.ita;
 		target_rate *= q->params.bandwidth;
 		target_rate <<= 8;
