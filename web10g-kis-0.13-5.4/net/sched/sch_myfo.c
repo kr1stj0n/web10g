@@ -78,7 +78,7 @@ static int myfo_change(struct Qdisc *sch, struct nlattr *opt,
 {
 	struct myfo_sched_data *q = qdisc_priv(sch);
 	struct nlattr *tb[TCA_MYFO_MAX + 1];
-	u32 qlen, us, dropped = 0U;
+	u32 qlen, dropped = 0U;
 	int err;
 
 	if (!opt)
@@ -135,7 +135,6 @@ static int myfo_init(struct Qdisc *sch, struct nlattr *opt,
 
 static int myfo_dump(struct Qdisc *sch, struct sk_buff *skb)
 {
-	struct myfo_sched_data *q = qdisc_priv(sch);
 	struct nlattr *opts = nla_nest_start_noflag(skb, TCA_OPTIONS);
 
 	if (!opts)
@@ -182,7 +181,7 @@ static struct sk_buff *myfo_qdisc_dequeue(struct Qdisc *sch)
 	return skb;
 }
 
-static struct Qdisc_ops shq_qdisc_ops __read_mostly = {
+static struct Qdisc_ops myfo_qdisc_ops __read_mostly = {
 	.id		= "myfo",
 	.priv_size	= sizeof(struct myfo_sched_data),
 	.enqueue	= myfo_qdisc_enqueue,
