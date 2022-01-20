@@ -23,6 +23,18 @@ build_stack() {
 }
 
 build_modules() {
+    # SCH_MYFO
+    CMD="sudo rmmod -f sch_myfo;
+         cp $MY_BUILD_DIR/Makefile.myfo $MY_SCHED_DIR/Makefile;
+         cd $MY_KERN_DIR && make modules_prepare && make M=net/sched/ clean && make M=net/sched/ modules && sudo make M=net/sched/ modules_install;
+         sudo depmod -a;
+         sudo cp /lib/modules/5.4.0/extra/sch_myfo.ko /lib/modules/5.4.0/kernel/net/sched/;
+         sudo depmod -a;
+         cp $MY_BUILD_DIR/Makefile.sched.init $MY_SCHED_DIR/Makefile;
+         sudo modprobe sch_myfo"
+
+    #eval $CMD
+
     # SCH_SHQ
     CMD="sudo rmmod -f sch_shq;
          cp $MY_BUILD_DIR/Makefile.shq $MY_SCHED_DIR/Makefile;

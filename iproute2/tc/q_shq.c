@@ -213,7 +213,7 @@ static int shq_print_xstats(struct qdisc_util *qu, FILE *f,
                 print_uint(PRINT_ANY, "avg_rate", "avg_rate %u ", st->avg_rate);
 
 	print_nl();
-	print_uint(PRINT_ANY, " packets_in", "packets_in %u ", st->packets_in);
+	print_uint(PRINT_ANY, "packets_in", " packets_in %u ", st->packets_in);
 	print_uint(PRINT_ANY, "dropped", "dropped %u ", st->dropped);
         print_uint(PRINT_ANY, "overlimit", "overlimit %u ", st->overlimit);
 	print_uint(PRINT_ANY, "maxq", "maxq %hu ", st->maxq);
