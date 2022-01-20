@@ -94,7 +94,7 @@ static void tcp_lgc_init(struct sock *sk)
 
 		ca->rate_eval = 0;
 		ca->rate      = 1ULL;
-		ca->minRTT    = 1U<<10;	/* reference of minRTT ever seen ~1ms */
+		ca->minRTT    = 1U<<15;	/* reference of minRTT ever seen ~32ms */
 		ca->fraction  = 0U;
 
 		lgc_reset(tp, ca);

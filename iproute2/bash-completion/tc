@@ -325,6 +325,10 @@ _tc_qdisc_options()
             _tc_one_of_list 'ecn noecn'
             return 0
             ;;
+        myfo)
+            _tc_once_attr 'limit'
+            return 0
+            ;;
         shq)
             _tc_once_attr 'limit interval maxp alpha bandwidth'
             _tc_one_of_list 'ecn noecn'

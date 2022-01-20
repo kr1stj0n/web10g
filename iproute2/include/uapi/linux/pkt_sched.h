@@ -1017,6 +1017,22 @@ struct tc_shq_xstats {
 	__u32 ecn_mark;		/* packets marked with ecn*/
 };
 
+/* MYFO */
+enum {
+	TCA_MYFO_UNSPEC,
+	TCA_MYFO_LIMIT,
+	__TCA_MYFO_MAX
+};
+#define TCA_MYFO_MAX   (__TCA_MYFO_MAX - 1)
+
+struct tc_myfo_xstats {
+	__u64 qdelay;	        /* current queuing delay */
+	__u32 packets_in;	/* total number of packets enqueued */
+	__u32 dropped;		/* packets dropped due to shq_action */
+	__u32 overlimit;	/* dropped due to full queue */
+	__u16 maxq;		/* maximum queue size */
+};
+
 /* ABC */
 enum {
 	TCA_ABC_UNSPEC,
