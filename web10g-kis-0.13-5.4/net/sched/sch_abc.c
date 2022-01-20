@@ -149,22 +149,28 @@ out:
 static void abc_process_dequeue(struct Qdisc *sch, struct sk_buff *skb)
 {
 	struct abc_sched_data *q = qdisc_priv(sch);
-	u64 target_rate = 0ULL, ft = 0ULL;
+	u64 target_rate = 0ULL, diff = 0ULL, ft = 0ULL;
 
-	if (q->params.refqd > q->stats.qdelay)
-		target_rate = q->params.refqd - q->stats.qdelay;
-	else
-		target_rate = q->stats.qdelay - q->params.refqd;
+	if (q->stats.qdelay <= q.params.refqd) {
+		target_rate = (u64)q->params.ita;
+		target_rate *= q->params.bandwidth;
+		target_rate <<= 8;
+	} else {
+		diff = q->stats.qdelay - q->params.refqd;
+		diff <<= 8;
 
-	target_rate <<= 8;
-	do_div(target_rate, q->params.delta);
+		u64 ita_delta = (u64)q->params.ita;
+		ita_delta *= q->params.delta;
 
-	target_rate += q->params.ita;
+		ita_delta -= diff;
 
-	target_rate *= q->params.bandwidth;
+		ita_delta *= q->params.bandwidth;
+		target_rate = ita_delta << 8;
+
+		do_div(target_rate, q->params.delta);
+	}
 
 	/* At this point, target_rate is in bytes/jiffies 24-bit scaled */
-	target_rate <<= 8;
 
 	//calculate f(t) using Eq 2.
 	if (q->vars.dq_rate) {

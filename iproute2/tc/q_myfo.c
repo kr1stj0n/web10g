@@ -101,9 +101,9 @@ static int myfo_print_xstats(struct qdisc_util *qu, FILE *f,
 
 	st = RTA_DATA(xstats);
 
-	fprintf(f, "delay %fus ", (double)st->qdelay / NSEC_PER_USEC);
+	fprintf(f, " delay %fus", (double)st->qdelay / NSEC_PER_USEC);
 	print_nl();
-	print_uint(PRINT_ANY, " packets_in", "packets_in %u ", st->packets_in);
+	print_uint(PRINT_ANY, "packets_in", " packets_in %u ", st->packets_in);
 	print_uint(PRINT_ANY, "dropped", "dropped %u ", st->dropped);
         print_uint(PRINT_ANY, "overlimit", "overlimit %u ", st->overlimit);
 	print_uint(PRINT_ANY, "maxq", "maxq %hu ", st->maxq);
