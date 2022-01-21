@@ -59,20 +59,19 @@ struct abc_sched_data {
 
 static void abc_params_init(struct abc_params *params)
 {
-	params->limit = 1000U;	/* default of 1000 packets */
-	/* default bandwidth is 1Gbps in bytes/jiffies */
-	params->bandwidth = 1U;
-	params->interval = usecs_to_jiffies(10 * USEC_PER_MSEC); /* 10 ms */
-	params->ita = 1U;
-	params->delta = (u32)(10 * NSEC_PER_MSEC);	/* 10ms */
-	params->refqd = (u64)(10 * NSEC_PER_MSEC);	/* 10ms */
+	params->limit 		= 1000U;	/* default of 1000 packets */
+	params->bandwidth	= 1U;
+	params->interval	= usecs_to_jiffies(10 * USEC_PER_MSEC); /* 10 ms */
+	params->ita		= 1U;
+	params->delta 		= (u32)(10 * NSEC_PER_MSEC);	/* 10ms */
+	params->refqd 		= (u64)(10 * NSEC_PER_MSEC);	/* 10ms */
 }
 
 static void abc_vars_init(struct abc_vars *vars)
 {
-	vars->token = 0ULL;
-	vars->dq_count = 0ULL;
-	vars->dq_rate = 0U;
+	vars->token	= 0ULL;
+	vars->dq_count	= 0ULL;
+	vars->dq_rate	= 0U;
 }
 
 /* Was this packet marked by Explicit Congestion Notification? */
@@ -84,7 +83,7 @@ static int abc_v4_is_ce(const struct sk_buff *skb)
 static void calculate_drain_rate(struct Qdisc *sch)
 {
 	struct abc_sched_data *q = qdisc_priv(sch);
-	u64 count64 = (u64)q->vars.dq_count;
+	u64 count64 = q->vars.dq_count;
 	u32 count32 = 0U;
 	count64 <<= 8;
 
@@ -153,6 +152,10 @@ static void abc_process_dequeue(struct Qdisc *sch, struct sk_buff *skb)
 	struct abc_sched_data *q = qdisc_priv(sch);
 	u64 target_rate = 0ULL, diff = 0ULL, ft = 0ULL;
 
+	/*                           bw                     +
+	 * target_rate = ita * bw - ----- * (qdelay - refqd)
+	 *                          delta
+	 */
 	if (q->stats.qdelay <= q->params.refqd) {
 		target_rate = (u64)q->params.ita;
 		target_rate *= q->params.bandwidth;
@@ -161,13 +164,13 @@ static void abc_process_dequeue(struct Qdisc *sch, struct sk_buff *skb)
 		diff = q->stats.qdelay - q->params.refqd;
 		diff <<= 8;
 
-		u64 ita_delta = (u64)q->params.ita;
-		ita_delta *= q->params.delta;
+		u64 ita_delta_bw = (u64)q->params.ita;
+		ita_delta_bw *= q->params.delta;
+		ita_delta_bw *= q->params.bandwidth;
 
-		ita_delta -= diff;
+		ita_delta_bw -= diff;
 
-		ita_delta *= q->params.bandwidth;
-		target_rate = ita_delta << 8;
+		target_rate = ita_delta_bw << 8;
 
 		do_div(target_rate, q->params.delta);
 	}
