@@ -97,12 +97,14 @@ static void calculate_drain_rate(struct Qdisc *sch)
 
 	if (q->vars.dq_rate == 0)
 		q->vars.dq_rate = count32;
+	else if (count32 > q->vars.dq_rate)
+		q->vars.dq_rate = count32;
 	else
-		q->vars.dq_rate =
-			(q->vars.dq_rate - (q->vars.dq_rate >> 3)) + (count32 >> 3);
+		q->vars.dq_rate = (q->vars.dq_rate -
+				   (q->vars.dq_rate >> 3)) + (count32 >> 3);
 
 	/* Reset dq_count every interval */
-	q->vars.dq_count = 0U;
+	q->vars.dq_count = 0ULL;
 }
 
 static void abc_timer(struct timer_list *t)
@@ -324,7 +326,8 @@ static int abc_dump(struct Qdisc *sch, struct sk_buff *skb)
 		goto nla_put_failure;
 
 	if (nla_put_u32(skb, TCA_ABC_LIMIT, sch->limit) ||
-	    nla_put_u32(skb, TCA_ABC_BANDWIDTH, (q->params.bandwidth >> 8) * msecs_to_jiffies(MSEC_PER_SEC)) ||
+	    nla_put_u32(skb, TCA_ABC_BANDWIDTH,
+			(q->params.bandwidth >> 8) * msecs_to_jiffies(MSEC_PER_SEC)) ||
 	    nla_put_u32(skb, TCA_ABC_INTERVAL, jiffies_to_usecs(q->params.interval)) ||
 	    nla_put_u32(skb, TCA_ABC_ITA, q->params.ita) ||
 	    nla_put_u32(skb, TCA_ABC_DELTA, (u32)(q->params.delta / NSEC_PER_USEC)) ||
@@ -342,8 +345,8 @@ static int abc_dump_stats(struct Qdisc *sch, struct gnet_dump *d)
 {
 	struct abc_sched_data *q = qdisc_priv(sch);
 	struct tc_abc_xstats st = {
-		/* TODO: unscale dq_rate to report the correct value */
-		.dq_rate	= q->vars.dq_rate,
+		/* dq_rate is in bytes per jiffies << 8 */
+		.dq_rate	= (q->vars.dq_rate * msecs_to_jiffies(MSEC_PER_SEC)) >> 8,
 		.qdelay         = q->stats.qdelay,
 		.packets_in	= q->stats.packets_in,
 		.dropped	= q->stats.dropped,
