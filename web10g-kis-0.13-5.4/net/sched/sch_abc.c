@@ -186,7 +186,7 @@ static void abc_process_dequeue(struct Qdisc *sch, struct sk_buff *skb)
 		ft = ONE;
 	}
 
-	// token = min(token + f(t), tokenLimit);
+	/* token = min(token + f(t), tokenLimit) */
 	q->vars.token += ft;
 	q->vars.token = min_t(u64, q->vars.token, TOKEN_LIMIT);
 

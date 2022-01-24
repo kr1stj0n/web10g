@@ -36,6 +36,7 @@
 #define BIG_ONE		(1LL<<16)
 #define THRESSH		((9U<<16)/10U)    /* ~0.9  */
 #define FRAC_LIMIT	((99U<<16)/100U)  /* ~0.99 */
+#define BW_GAIN		((130U<<16)/100U)  /* ~1.3 */
 
 struct lgc {
 	u32 old_delivered;
@@ -68,8 +69,8 @@ static unsigned int lgc_coef __read_mostly = 20;
 module_param(lgc_coef, uint, 0644);
 MODULE_PARM_DESC(lgc_coef, "lgc_coef");
 
-/* lgc_max_rate = 125000 bytes/msec = 1000Mbps */
-static unsigned int lgc_max_rate __read_mostly = 125000;
+/* lgc_max_rate = 12500 bytes/msec = 100Mbps */
+static unsigned int lgc_max_rate __read_mostly = 12500;
 module_param(lgc_max_rate, uint, 0644);
 MODULE_PARM_DESC(lgc_max_rate, "lgc_max_rate");
 /* End of Module parameters */
@@ -93,8 +94,8 @@ static void tcp_lgc_init(struct sock *sk)
 		struct lgc *ca = inet_csk_ca(sk);
 
 		ca->rate_eval = 0;
-		ca->rate      = 1ULL;
-		ca->minRTT    = 1U<<15;	/* reference of minRTT ever seen ~32ms */
+		ca->rate      = 12500ULL;
+		ca->minRTT    = 1U<<20;	/* reference of minRTT ever seen ~1s */
 		ca->fraction  = 0U;
 
 		lgc_reset(tp, ca);
@@ -244,6 +245,8 @@ static void lgc_set_cwnd(struct sock *sk)
 	tp->snd_cwnd = max_t(u32, (u32)target_cwnd + 1, 2U);
 	/* Add a small gain to avoid truncation in bandwidth */
 	tp->snd_cwnd <<= 1;
+	tp->snd_cwnd *= BW_GAIN;
+	tp->snd_cwnd >>= 16;
 
 	if (tp->snd_cwnd > tp->snd_cwnd_clamp)
 		tp->snd_cwnd = tp->snd_cwnd_clamp;
