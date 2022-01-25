@@ -80,10 +80,12 @@ static void shq_vars_init(struct shq_vars *vars)
 static bool should_mark(struct Qdisc *sch)
 {
 	struct shq_sched_data *q = qdisc_priv(sch);
-	u64 maxp64 = q->params.maxp<<(SHQ_SCALE - 1);
+	u64 maxp64 = q->params.maxp<<(SHQ_SCALE - 2);
 	u64 rand = 0ULL;
 
-	/* if current prob is already low, do not mark */
+	/* if current prob is already low (quarter of link util * maxp),
+	 * do not mark
+	 */
 	if (q->stats.prob < maxp64)
 		return false;
 

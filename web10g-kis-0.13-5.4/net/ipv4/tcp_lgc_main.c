@@ -34,9 +34,9 @@
 #define LGC_SHIFT	16
 #define ONE		(1U<<16)
 #define BIG_ONE		(1LL<<16)
-#define THRESSH		((9U<<16)/10U)    /* ~0.9  */
-#define FRAC_LIMIT	((99U<<16)/100U)  /* ~0.99 */
-#define BW_GAIN		((130U<<16)/100U)  /* ~1.3 */
+#define THRESSH		((8U<<16)/10U)		/* ~0.9  */
+#define FRAC_LIMIT	((99U<<16)/100U)	/* ~0.99 */
+#define BW_GAIN		((130U<<16)/100U)	/* ~1.3 */
 
 struct lgc {
 	u32 old_delivered;
@@ -195,9 +195,9 @@ static void lgc_update_rate(struct sock *sk)
 	do_div(rateo, lgc_max_rate);
 	s64 gradient = (s64)((s64)(BIG_ONE) - (s64)(rateo) - (s64)q);
 
-	if (delivered_ce == ONE)
+	if (delivered_ce == ONE) {
 		gr /= lgc_coef;
-	else {
+	} else {
 		if (delivered_ce)
 			gr = lgc_exp_lut_lookup(delivered_ce); /* 30bit scaled */
 	}
@@ -205,7 +205,7 @@ static void lgc_update_rate(struct sock *sk)
 	gr_rate_gradient *= gr;
 	gr_rate_gradient *= lgc_logP_16;
 	gr_rate_gradient >>= 30;	/* 16-bit scaled at this point */
-	gr_rate_gradient *= rate;
+	gr_rate_gradient *= rate;	/* rate: bpms << 16 */
 	gr_rate_gradient *= gradient;
 	gr_rate_gradient >>= 32;	/* back to 16-bit scaled */
 
@@ -244,9 +244,8 @@ static void lgc_set_cwnd(struct sock *sk)
 
 	tp->snd_cwnd = max_t(u32, (u32)target_cwnd + 1, 2U);
 	/* Add a small gain to avoid truncation in bandwidth */
-	tp->snd_cwnd <<= 1;
-	tp->snd_cwnd *= BW_GAIN;
-	tp->snd_cwnd >>= 16;
+	/* tp->snd_cwnd *= BW_GAIN; */
+	/* tp->snd_cwnd >>= 16; */
 
 	if (tp->snd_cwnd > tp->snd_cwnd_clamp)
 		tp->snd_cwnd = tp->snd_cwnd_clamp;
