@@ -34,6 +34,7 @@ struct shq_params {
 struct shq_vars {
 	u64 avg_qlen;	/* average length of the queue */
 	u64 count;	/* byte count */
+	u32 max_bytes;	/* max bytes that can be received during the interval */
 	u32 avg_rate;	/* bytes per pschedtime tick, scaled */
 };
 
@@ -72,6 +73,7 @@ static void shq_vars_init(struct shq_vars *vars)
 {
 	vars->avg_qlen	= 0ULL;
 	vars->count	= 0ULL;
+	vars->max_bytes	= 0U;
 	vars->avg_rate	= 0U;
 }
 
@@ -101,22 +103,20 @@ static void calc_probability(struct Qdisc *sch)
 
 	avg_qlen = (u64)(avg_qlen * (u64)(ONE - q->params.alpha)) +
 		(u64)(count * (u64)(q->params.alpha));
-	avg_qlen >>= SHQ_SCALE;
+
+	avg_qlen >>= SHQ_SCALE;	/* Now avg_qlen is 16-bit scaled */
 	q->vars.avg_qlen = avg_qlen;
 
 	/*                avg_qlen
-	 * prob = maxp * ----------
+	 * prob = maxp * ----------;	32-bit scaled probability stored in u64
 	 *                max_bytes
 	 */
 
 	avg_qlen *= q->params.maxp;
 
-	/* Calculate the maximum number of incoming bytes during the interval */
-	max_bytes = q->params.bandwidth / MSEC_PER_SEC;
-	max_bytes *= jiffies_to_msecs(q->params.interval);
 
 	/* Calculate the probability */
-	do_div(avg_qlen, max_bytes);
+	do_div(avg_qlen, q->vars.max_bytes);
 
 	/* The probability value should not exceed Max. probability */
 	tmp_maxp = (u64)q->params.maxp; tmp_maxp <<= SHQ_SCALE;
@@ -126,7 +126,7 @@ static void calc_probability(struct Qdisc *sch)
 	/* Reset count every interval */
 	q->vars.count = 0ULL;
 
-	/* Update stats */
+	/* Update prob statisctic */
 	q->stats.prob = avg_qlen;
 }
 
@@ -137,7 +137,7 @@ static void shq_timer(struct timer_list *t)
 	spinlock_t *root_lock = qdisc_lock(qdisc_root_sleeping(sch));
 
 	spin_lock(root_lock);
-	calculate_probability(sch);
+	calc_probability(sch);
 
 	/* reset the timer to fire after 'interval'. interval is in jiffies. */
 	if (q->params.interval)
@@ -201,7 +201,7 @@ static int shq_change(struct Qdisc *sch, struct nlattr *opt,
 {
 	struct shq_sched_data *q = qdisc_priv(sch);
 	struct nlattr *tb[TCA_SHQ_MAX + 1];
-	u32 qlen, dropped = 0U;
+	u32 qlen, dropped = 0U, max_bytes = 0U;
 	int err;
 
 	if (!opt)
@@ -247,6 +247,14 @@ static int shq_change(struct Qdisc *sch, struct nlattr *opt,
 		rtnl_qdisc_drop(skb, sch);
 	}
 	qdisc_tree_reduce_backlog(sch, qlen - sch->q.qlen, dropped);
+
+	/* Now that we know both the bandwidth and interval,
+	 * calculate the maximum bytes that can be received
+	 * during the interval.
+	 */
+	max_bytes = q->params.bandwidth / MSEC_PER_SEC;
+	max_bytes *= jiffies_to_msecs(q->params.interval);
+	q->vars.max_bytes = max_bytes;
 
 	sch_tree_unlock(sch);
 	return 0;
@@ -346,7 +354,7 @@ static void shq_destroy(struct Qdisc *sch)
 {
 	struct shq_sched_data *q = qdisc_priv(sch);
 
-	q->params.interval = 0;
+	q->params.interval = 0U;
 	del_timer_sync(&q->adapt_timer);
 }
 
