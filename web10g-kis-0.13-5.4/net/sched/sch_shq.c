@@ -24,7 +24,7 @@
 struct shq_params {
 	u32 limit;	/* number of packets that can be enqueued */
 	u32 interval;	/* user specified interval in pschedtime */
-	u64 maxp;	/* maxp is the scaled maximum prob. [0,1] */
+	u32 maxp;	/* maxp is the scaled maximum prob. [0,1] */
 	u32 alpha;	/* alpha is between 0 and 1 */
 	u32 bandwidth;	/* bandwidth interface bytes/sec */
 	bool ecn;	/* true if ecn is enabled */
@@ -63,7 +63,7 @@ static void shq_params_init(struct shq_params *params)
 {
 	params->limit     = 1000U;		   /* default of 1000 packets */
 	params->interval  = usecs_to_jiffies(10 * USEC_PER_MSEC);     /* 10ms */
-	params->maxp      = 1ULL<<SHQ_SCALE;
+	params->maxp      = 1U<<SHQ_SCALE;
 	params->alpha     = 0U;
 	params->bandwidth = 0U;
 	params->ecn       = true;
@@ -80,16 +80,9 @@ static void shq_vars_init(struct shq_vars *vars)
 static bool should_mark(struct Qdisc *sch)
 {
 	struct shq_sched_data *q = qdisc_priv(sch);
-	u64 maxp64 = q->params.maxp<<(SHQ_SCALE - 2);
 	u64 rand = 0ULL;
 
-	/* if current prob is already low (quarter of link util * maxp),
-	 * do not mark
-	 */
-	if (q->stats.prob < maxp64)
-		return false;
-
-	/* Generate a 32-bit random number */
+	/* Generate a 4 byte = 32-bit random number and store it in u64 */
 	prandom_bytes(&rand, 4);
 
 	if (rand < q->stats.prob)
@@ -122,11 +115,11 @@ static void calc_probability(struct Qdisc *sch)
 	avg_qlen *= q->params.maxp;
 
 
-	/* Calculate the probability */
+	/* Calculate the probability as u64 32-bit scaled */
 	do_div(avg_qlen, q->vars.max_bytes);
 
 	/* The probability value should not exceed Max. probability */
-	maxp64 = q->params.maxp<<SHQ_SCALE;
+	maxp64 = (u64)q->params.maxp; maxp64<<=SHQ_SCALE;
 	if (avg_qlen > maxp64)
 		avg_qlen = maxp64;
 
@@ -233,7 +226,7 @@ static int shq_change(struct Qdisc *sch, struct nlattr *opt,
 		q->params.interval = usecs_to_jiffies(nla_get_u32(tb[TCA_SHQ_INTERVAL]));
 
 	if (tb[TCA_SHQ_MAXP])
-		q->params.maxp = (u64)nla_get_u32(tb[TCA_SHQ_MAXP]);
+		q->params.maxp = nla_get_u32(tb[TCA_SHQ_MAXP]);
 
 	if (tb[TCA_SHQ_ALPHA])
 		q->params.alpha = nla_get_u32(tb[TCA_SHQ_ALPHA]);
