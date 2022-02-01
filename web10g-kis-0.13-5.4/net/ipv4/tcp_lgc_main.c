@@ -34,40 +34,26 @@
 #define LGC_SHIFT	16
 #define ONE		(1U<<16)
 #define BIG_ONE		(1LL<<16)
-#define THRESSH		((8U<<16)/10U)		/* ~0.9  */
+#define THRESSH		((9U<<16)/10U)		/* ~0.9  */
 #define FRAC_LIMIT	((99U<<16)/100U)	/* ~0.99 */
-#define BW_GAIN		((130U<<16)/100U)	/* ~1.3 */
+#define BW_GAIN		((120U<<16)/100U)	/* ~1.3 */
 
 struct lgc {
 	u32 old_delivered;
 	u32 old_delivered_ce;
 	u32 next_seq;
 	u64 rate;
+	u64 max_rate;
 	u32 minRTT;
 	u32 fraction;
 	u8  rate_eval:1;
 };
 
 /* Module parameters */
-/* lgc_logPhi_11 = log2(2.78) * 2^11 */
-static unsigned int lgc_logPhi_11 __read_mostly = 3020;
-module_param(lgc_logPhi_11, uint, 0644);
-MODULE_PARM_DESC(lgc_logPhi_11, "scaled log(phi)");
-
 /* lgc_alpha_16 = alpha << 16 = 0.25 * 2^16 */
 static unsigned int lgc_alpha_16 __read_mostly = 16384;
 module_param(lgc_alpha_16, uint, 0644);
 MODULE_PARM_DESC(lgc_alpha_16, "scaled alpha");
-
-/* lgc_logP_16 = loge(1.4) * 2^16 */
-static unsigned int lgc_logP_16 __read_mostly = 22051;
-module_param(lgc_logP_16, uint, 0644);
-MODULE_PARM_DESC(lgc_logP_16, "scaled logP");
-
-/* lgc_coef = 20 */
-static unsigned int lgc_coef __read_mostly = 20;
-module_param(lgc_coef, uint, 0644);
-MODULE_PARM_DESC(lgc_coef, "lgc_coef");
 
 /* lgc_max_rate = 12500 bytes/msec = 100Mbps */
 static unsigned int lgc_max_rate __read_mostly = 12500;
@@ -88,11 +74,14 @@ static void lgc_reset(const struct tcp_sock *tp, struct lgc *ca)
 static void tcp_lgc_init(struct sock *sk)
 {
 	const struct tcp_sock *tp = tcp_sk(sk);
+	u64 max_rate_scaled = (u64)lgc_max_rate;
 
 	if ((sk->sk_state == TCP_LISTEN || sk->sk_state == TCP_CLOSE)
                                         || (tp->ecn_flags & TCP_ECN_OK)) {
 		struct lgc *ca = inet_csk_ca(sk);
 
+		max_rate_scaled <<= LGC_SHIFT;
+		ca->max_rate  = max_rate_scaled;
 		ca->rate_eval = 0;
 		ca->rate      = 12500ULL;
 		ca->minRTT    = 1U<<20;	/* reference of minRTT ever seen ~1s */
@@ -167,7 +156,7 @@ static void lgc_update_rate(struct sock *sk)
 	u64 rateo = ca->rate;
 	u64 q = 0ULL;
 	u32 fraction = 0U;
-	u32 gr = 1U<<30;
+	u32 gr = 1U<<16;
 
 	u32 delivered_ce = tp->delivered_ce - ca->old_delivered_ce;
 	u32 delivered = tp->delivered - ca->old_delivered;
@@ -175,36 +164,37 @@ static void lgc_update_rate(struct sock *sk)
 	delivered_ce <<= LGC_SHIFT;
 	delivered_ce /= max(delivered, 1U);
 
-	if (delivered_ce >= THRESSH) {
+	if (delivered_ce >= THRESSH)
 		fraction = ((ONE - lgc_alpha_16) * ca->fraction) + (lgc_alpha_16 * delivered_ce);
-		ca->fraction = fraction >> LGC_SHIFT;
-	} else {
+	else
 		fraction = (ONE - lgc_alpha_16) * ca->fraction;
-		ca->fraction = fraction >> LGC_SHIFT;
-	}
+
+	ca->fraction = fraction >> LGC_SHIFT;
 	if (ca->fraction == ONE)
 		ca->fraction = FRAC_LIMIT;
 
 	/* At this point, we have a ca->fraction = [0,1) << LGC_SHIFT */
 
 	/* after the division, q is FP << 16 */
+	/*     - (log2(1 - fraction)) */
+	/* q = ---------------------- */
+        /*           log2(phi) */
+
 	if (ca->fraction)
-		q = (u64)(lgc_log_lut_lookup(ca->fraction) / lgc_logPhi_11);
+		q = (u64)(lgc_log_lut_lookup(ca->fraction));
 
 	/* Calculate gradient */
 	do_div(rateo, lgc_max_rate);
 	s64 gradient = (s64)((s64)(BIG_ONE) - (s64)(rateo) - (s64)q);
 
 	if (delivered_ce == ONE) {
-		gr /= lgc_coef;
+		gr /= 20; // hardcoded lgc_coef = 20;
 	} else {
 		if (delivered_ce)
-			gr = lgc_exp_lut_lookup(delivered_ce); /* 30bit scaled */
+			gr = lgc_exp_lut_lookup(delivered_ce); /* 16bit scaled */
 	}
 
 	gr_rate_gradient *= gr;
-	gr_rate_gradient *= lgc_logP_16;
-	gr_rate_gradient >>= 30;	/* 16-bit scaled at this point */
 	gr_rate_gradient *= rate;	/* rate: bpms << 16 */
 	gr_rate_gradient *= gradient;
 	gr_rate_gradient >>= 32;	/* back to 16-bit scaled */
@@ -218,10 +208,8 @@ static void lgc_update_rate(struct sock *sk)
 		rate = new_rate;
 
 	/* Check if the new rate exceeds the link capacity */
-	u64 max_rate_scaled = (u64)lgc_max_rate;
-	max_rate_scaled <<= LGC_SHIFT;
-	if (rate > max_rate_scaled)
-		rate = max_rate_scaled;
+	if (rate > ca->max_rate)
+		rate = ca->max_rate;
 
 	/* lgc_rate can be read from lgc_get_info() without
 	 * synchro, so we ask compiler to not use rate
@@ -244,8 +232,8 @@ static void lgc_set_cwnd(struct sock *sk)
 
 	tp->snd_cwnd = max_t(u32, (u32)target_cwnd + 1, 2U);
 	/* Add a small gain to avoid truncation in bandwidth */
-	/* tp->snd_cwnd *= BW_GAIN; */
-	/* tp->snd_cwnd >>= 16; */
+	tp->snd_cwnd *= BW_GAIN;
+	tp->snd_cwnd >>= 16;
 
 	if (tp->snd_cwnd > tp->snd_cwnd_clamp)
 		tp->snd_cwnd = tp->snd_cwnd_clamp;
@@ -334,5 +322,5 @@ module_exit(lgc_unregister);
 MODULE_AUTHOR("Peyman Teymoori <peymant@ifi.uio.no>");
 MODULE_AUTHOR("Kr1stj0n C1k0 <kristjoc@ifi.uio.no>");
 MODULE_LICENSE("GPL");
-MODULE_VERSION("1.3");
+MODULE_VERSION("1.31");
 MODULE_DESCRIPTION("Logistic Growth Congestion Control (LGC)");
