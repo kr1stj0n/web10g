@@ -151,8 +151,8 @@ static void lgc_update_rate(struct sock *sk)
 	struct tcp_sock *tp = tcp_sk(sk);
 	struct lgc *ca = inet_csk_ca(sk);
 	s64 gr_rate_gradient = 1LL;
-	u64 rate = ca->rate;
-	u64 rateo = ca->rate;
+	u64 rate = ca->rate; u64 rateo = ca->rate;
+	u64 new_rate = 0ULL;
 	u64 q = 0ULL;
 	u32 fraction = 0U;
 	u32 gr = 1U<<16;
@@ -198,7 +198,7 @@ static void lgc_update_rate(struct sock *sk)
 	gr_rate_gradient *= gradient;
 	gr_rate_gradient >>= 32;	/* back to 16-bit scaled */
 
-	u64 new_rate = (u64)(rate + gr_rate_gradient);
+	new_rate = (u64)(rate + gr_rate_gradient);
 
 	/* new rate shouldn't increase more than twice */
 	if (new_rate > (rate << 1))
@@ -230,9 +230,9 @@ static void lgc_set_cwnd(struct sock *sk)
 	do_div(target_cwnd, tp->mss_cache * USEC_PER_MSEC);
 
 	tp->snd_cwnd = max_t(u32, (u32)target_cwnd + 1, 2U);
-	/* Add a small gain to avoid truncation in bandwidth */
-	tp->snd_cwnd *= BW_GAIN;
-	tp->snd_cwnd >>= 16;
+	/* Add a small gain to avoid truncation in bandwidth - disabled 4 now */
+	/* tp->snd_cwnd *= BW_GAIN; */
+	/* tp->snd_cwnd >>= 16; */
 
 	if (tp->snd_cwnd > tp->snd_cwnd_clamp)
 		tp->snd_cwnd = tp->snd_cwnd_clamp;
