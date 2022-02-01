@@ -7288,12 +7288,12 @@ const u32 lgc_exp_lut[LGC_LUT_SIZE] = {
 1103, 1103, 1103, 1103, 1103, 1103, 1103, 1102, 1102, 1102, 1102, 1102, 1102, 1102, 1102
 };
 
-inline u32 lgc_log_lut_lookup(u16 fraction)
+inline u32 lgc_log_lut_lookup(u32 fraction)
 {
 	return (u32) lgc_log_lut[LGC_LUT_SIZE - fraction];
 }
 
-inline u32 lgc_exp_lut_lookup(u16 fraction)
+inline u32 lgc_exp_lut_lookup(u32 fraction)
 {
 	return (u32) lgc_exp_lut[fraction];
 }
