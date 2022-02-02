@@ -3,7 +3,7 @@
 
 #include <linux/types.h>
 
-#define LGC_LUT_SIZE 65536U
+#define LGC_LUT_SIZE 65537U
 extern const u32 lgc_log_lut[LGC_LUT_SIZE];
 extern const u32 exp_lut[LGC_LUT_SIZE];
 

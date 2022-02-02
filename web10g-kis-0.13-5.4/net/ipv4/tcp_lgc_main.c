@@ -151,10 +151,8 @@ static void lgc_update_rate(struct sock *sk)
 	struct tcp_sock *tp = tcp_sk(sk);
 	struct lgc *ca = inet_csk_ca(sk);
 	s64 gr_rate_gradient = 1LL;
-	u64 rate = ca->rate; u64 rateo = ca->rate;
-	u64 new_rate = 0ULL;
-	u32 fraction = 0U;
-	u32 gr = 1U<<16;
+	u64 rate = ca->rate; u64 rateo = ca->rate, new_rate = 0ULL;
+	u32 fraction = 0U, gr;
 
 	u32 delivered_ce = tp->delivered_ce - ca->old_delivered_ce;
 	u32 delivered = tp->delivered - ca->old_delivered;
@@ -187,12 +185,7 @@ static void lgc_update_rate(struct sock *sk)
 
 	/* s64 gradient = (s64)((s64)(BIG_ONE) - (s64)(rateo) - (s64)q); */
 
-	if (delivered_ce == ONE) {
-		gr /= 5; // hardcoded lgc_coef = 5;
-	} else {
-		if (delivered_ce)
-			gr = lgc_exp_lut_lookup(delivered_ce); /* 16bit scaled */
-	}
+	gr = lgc_exp_lut_lookup(delivered_ce); /* 16bit scaled */
 
 	gr_rate_gradient *= gr;
 	gr_rate_gradient *= rate;	/* rate: bpms << 16 */
@@ -232,7 +225,7 @@ static void lgc_set_cwnd(struct sock *sk)
 	target_cwnd >>= LGC_SHIFT;
 	do_div(target_cwnd, tp->mss_cache * USEC_PER_MSEC);
 
-	tp->snd_cwnd = max_t(u32, (u32)target_cwnd + 1, 2U);
+	tp->snd_cwnd = max_t(u32, (u32)target_cwnd + 3, 2U);
 	/* Add a small gain to avoid truncation in bandwidth - disabled 4 now */
 	/* tp->snd_cwnd *= BW_GAIN; */
 	/* tp->snd_cwnd >>= 16; */
