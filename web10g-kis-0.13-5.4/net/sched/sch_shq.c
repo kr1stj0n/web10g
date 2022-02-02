@@ -18,7 +18,9 @@
 #include <net/inet_ecn.h>
 
 #define SHQ_SCALE 16
-#define ONE (1U<<16)
+#define ONE 65536U
+#define ONE_PROB (1ULL<<32)
+
 
 /* parameters used */
 struct shq_params {
@@ -36,6 +38,7 @@ struct shq_vars {
 	u64 count;	/* byte count */
 	u32 max_bytes;	/* max bytes that can be received during the interval */
 	u32 avg_rate;	/* bytes per pschedtime tick, scaled */
+	u64 maxp64;
 };
 
 /* statistics gathering */
@@ -63,7 +66,7 @@ static void shq_params_init(struct shq_params *params)
 {
 	params->limit     = 1000U;		   /* default of 1000 packets */
 	params->interval  = usecs_to_jiffies(10 * USEC_PER_MSEC);     /* 10ms */
-	params->maxp      = 1U<<SHQ_SCALE;
+	params->maxp      = ONE;
 	params->alpha     = 0U;
 	params->bandwidth = 0U;
 	params->ecn       = true;
@@ -75,6 +78,7 @@ static void shq_vars_init(struct shq_vars *vars)
 	vars->count	= 0ULL;
 	vars->max_bytes	= 0U;
 	vars->avg_rate	= 0U;
+	vars->maxp64	= 0ULL;
 }
 
 static bool should_mark(struct Qdisc *sch)
@@ -96,13 +100,12 @@ static void calc_probability(struct Qdisc *sch)
 	struct shq_sched_data *q = qdisc_priv(sch);
 	u64 avg_qlen	= q->vars.avg_qlen;
 	u64 count	= q->vars.count;
-	u64 maxp64	= 0ULL;
 
 	count += sch->qstats.backlog;	/* current queue length in bytes */
 	count <<= SHQ_SCALE;
 
-	avg_qlen = (u64)(avg_qlen * (u64)(ONE - q->params.alpha)) +
-		(u64)(count * (u64)(q->params.alpha));
+	avg_qlen = (u64)(avg_qlen * (ONE - q->params.alpha)) +
+		(u64)(count * q->params.alpha);
 
 	avg_qlen >>= SHQ_SCALE;	/* Now avg_qlen is 16-bit scaled */
 	q->vars.avg_qlen = avg_qlen;
@@ -119,9 +122,8 @@ static void calc_probability(struct Qdisc *sch)
 	do_div(avg_qlen, q->vars.max_bytes);
 
 	/* The probability value should not exceed Max. probability */
-	maxp64 = (u64)q->params.maxp; maxp64<<=SHQ_SCALE;
-	if (avg_qlen > maxp64)
-		avg_qlen = maxp64;
+	if (avg_qlen >= q->maxp64)
+		avg_qlen = (u64)ONE_PROB;
 
 	/* Reset count every interval */
 	q->vars.count = 0ULL;
@@ -202,6 +204,7 @@ static int shq_change(struct Qdisc *sch, struct nlattr *opt,
 	struct shq_sched_data *q = qdisc_priv(sch);
 	struct nlattr *tb[TCA_SHQ_MAX + 1];
 	u32 qlen, dropped = 0U, max_bytes = 0U;
+	u64 maxp64 = 0ULL;
 	int err;
 
 	if (!opt)
@@ -225,8 +228,11 @@ static int shq_change(struct Qdisc *sch, struct nlattr *opt,
 	if (tb[TCA_SHQ_INTERVAL])
 		q->params.interval = usecs_to_jiffies(nla_get_u32(tb[TCA_SHQ_INTERVAL]));
 
-	if (tb[TCA_SHQ_MAXP])
+	if (tb[TCA_SHQ_MAXP]) {
 		q->params.maxp = nla_get_u32(tb[TCA_SHQ_MAXP]);
+		maxp64 = (u64)q->params.maxp;
+		maxp64 <<= SHQ_SCALE;
+	}
 
 	if (tb[TCA_SHQ_ALPHA])
 		q->params.alpha = nla_get_u32(tb[TCA_SHQ_ALPHA]);
