@@ -153,7 +153,6 @@ static void lgc_update_rate(struct sock *sk)
 	s64 gr_rate_gradient = 1LL;
 	u64 rate = ca->rate; u64 rateo = ca->rate;
 	u64 new_rate = 0ULL;
-	u64 q = 0ULL;
 	u32 fraction = 0U;
 	u32 gr = 1U<<16;
 
@@ -174,20 +173,22 @@ static void lgc_update_rate(struct sock *sk)
 
 	/* At this point, we have a ca->fraction = [0,1) << LGC_SHIFT */
 
-	/* after the division, q is FP << 16 */
-	/*     - (log2(1 - fraction)) */
-	/* q = ---------------------- */
-        /*           log2(phi) */
+	/* Calculate gradient
 
-	if (ca->fraction)
-		q = (u64)(lgc_log_lut_lookup(ca->fraction));
+	 *            - log2(rate/max_rate)    -log2(1-fraction)
+	 * gradient = --------------------- - ------------------
+         *                 log2(phi1)             log2(phi2)
+	 */
 
-	/* Calculate gradient */
 	do_div(rateo, lgc_max_rate);
-	s64 gradient = (s64)((s64)(BIG_ONE) - (s64)(rateo) - (s64)q);
+	s32 first_term = lgc_log_lut_lookup((u32)rateo);
+	s32 second_term = lgc_log_lut_lookup((u32)(ONE - ca->fraction));
+	s32 gradient = first_term - second_term;
+
+	/* s64 gradient = (s64)((s64)(BIG_ONE) - (s64)(rateo) - (s64)q); */
 
 	if (delivered_ce == ONE) {
-		gr /= 20; // hardcoded lgc_coef = 20;
+		gr /= 5; // hardcoded lgc_coef = 5;
 	} else {
 		if (delivered_ce)
 			gr = lgc_exp_lut_lookup(delivered_ce); /* 16bit scaled */
@@ -203,6 +204,8 @@ static void lgc_update_rate(struct sock *sk)
 	/* new rate shouldn't increase more than twice */
 	if (new_rate > (rate << 1))
 		rate <<= 1;
+	else if (new_rate == 0)
+		rate = 65536U;
 	else
 		rate = new_rate;
 
