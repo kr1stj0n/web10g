@@ -122,7 +122,7 @@ static void calc_probability(struct Qdisc *sch)
 	do_div(avg_qlen, q->vars.max_bytes);
 
 	/* The probability value should not exceed Max. probability */
-	if (avg_qlen >= q->maxp64)
+	if (avg_qlen >= q->vars.maxp64)
 		avg_qlen = (u64)ONE_PROB;
 
 	/* Reset count every interval */
