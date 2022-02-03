@@ -18,7 +18,7 @@
 #include <net/inet_ecn.h>
 
 #define SHQ_SCALE 16
-#define ONE 65536U
+#define ONE 0x00010000
 #define ONE_PROB (1ULL<<32)
 
 
@@ -123,7 +123,7 @@ static void calc_probability(struct Qdisc *sch)
 
 	/* The probability value should not exceed Max. probability */
 	if (avg_qlen >= q->vars.maxp64)
-		avg_qlen = (u64)ONE_PROB;
+		avg_qlen = 0x00000000ffffffff;
 
 	/* Reset count every interval */
 	q->vars.count = 0ULL;
@@ -231,7 +231,8 @@ static int shq_change(struct Qdisc *sch, struct nlattr *opt,
 	if (tb[TCA_SHQ_MAXP]) {
 		q->params.maxp = nla_get_u32(tb[TCA_SHQ_MAXP]);
 		maxp64 = (u64)q->params.maxp;
-		maxp64 <<= SHQ_SCALE;
+		maxp64<<=SHQ_SCALE;
+		q->vars.maxp64 = maxp64;
 	}
 
 	if (tb[TCA_SHQ_ALPHA])
