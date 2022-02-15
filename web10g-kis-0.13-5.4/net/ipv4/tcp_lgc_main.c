@@ -50,8 +50,8 @@ struct lgc {
 };
 
 /* Module parameters */
-/* lgc_alpha_16 = alpha << 16 = 0.25 * 2^16 */
-static unsigned int lgc_alpha_16 __read_mostly = 16384;
+/* lgc_alpha_16 = alpha << 16 = 0.05 * 2^16 */
+static unsigned int lgc_alpha_16 __read_mostly = 3277;
 module_param(lgc_alpha_16, uint, 0644);
 MODULE_PARM_DESC(lgc_alpha_16, "scaled alpha");
 
@@ -179,8 +179,8 @@ static void lgc_update_rate(struct sock *sk)
 	 */
 
 	do_div(rateo, lgc_max_rate);
-	s32 first_term = lgc_log_lut_lookup((u32)rateo);
-	s32 second_term = lgc_log_lut_lookup((u32)(ONE - ca->fraction));
+	s32 first_term = (s32)lgc_log_lut_lookup((u32)rateo);
+	s32 second_term = (s32)lgc_log_lut_lookup((u32)(ONE - ca->fraction));
 	s32 gradient = first_term - second_term;
 
 	/* s64 gradient = (s64)((s64)(BIG_ONE) - (s64)(rateo) - (s64)q); */
@@ -225,7 +225,7 @@ static void lgc_set_cwnd(struct sock *sk)
 	target_cwnd >>= LGC_SHIFT;
 	do_div(target_cwnd, tp->mss_cache * USEC_PER_MSEC);
 
-	tp->snd_cwnd = max_t(u32, (u32)target_cwnd + 3, 2U);
+	tp->snd_cwnd = max_t(u32, (u32)target_cwnd + 1, 10U);
 	/* Add a small gain to avoid truncation in bandwidth - disabled 4 now */
 	/* tp->snd_cwnd *= BW_GAIN; */
 	/* tp->snd_cwnd >>= 16; */
