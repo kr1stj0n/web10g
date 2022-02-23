@@ -19,7 +19,6 @@
 
 #define SHQ_SCALE 16
 #define ONE 0x00010000
-#define ONE_PROB (1ULL<<32)
 
 
 /* parameters used */
@@ -64,11 +63,11 @@ struct shq_sched_data {
 
 static void shq_params_init(struct shq_params *params)
 {
-	params->limit     = 1000U;		   /* default of 1000 packets */
-	params->interval  = usecs_to_jiffies(10 * USEC_PER_MSEC);     /* 10ms */
-	params->maxp      = ONE;
-	params->alpha     = 0U;
-	params->bandwidth = 0U;
+	params->limit     = 1000U;		/* default of 1000 packets */
+	params->interval  = usecs_to_jiffies(10 * USEC_PER_MSEC);  /* 10ms */
+	params->maxp      = 52428U;		/* 0.8 << 16 */
+	params->alpha     = 49152U;		/* 0.75 << 16 */
+	params->bandwidth = 12500000U; 		/* 10Mbps */
 	params->ecn       = true;
 }
 
@@ -107,7 +106,7 @@ static void calc_probability(struct Qdisc *sch)
 	avg_qlen = (u64)(avg_qlen * (ONE - q->params.alpha)) +
 		(u64)(count * q->params.alpha);
 
-	avg_qlen >>= SHQ_SCALE;	/* Now avg_qlen is 16-bit scaled */
+	avg_qlen >>= SHQ_SCALE;		/* Now avg_qlen is 16-bit scaled */
 	q->vars.avg_qlen = avg_qlen;
 
 	/*                avg_qlen
@@ -151,7 +150,6 @@ static int shq_qdisc_enqueue(struct sk_buff *skb, struct Qdisc *sch,
 			     struct sk_buff **to_free)
 {
 	struct shq_sched_data *q = qdisc_priv(sch);
-	bool enqueue = false;
 
 	if (unlikely(qdisc_qlen(sch) >= sch->limit)) {
 		q->stats.overlimit++;
@@ -160,30 +158,23 @@ static int shq_qdisc_enqueue(struct sk_buff *skb, struct Qdisc *sch,
 
 	q->vars.count += qdisc_pkt_len(skb);
 
-	if (!should_mark(sch)) {
-		/* Don't mark the packet; enqueue since the queue is not full */
-		enqueue = true;
-	} else {
+	if (should_mark(sch)) {
 		if (q->params.ecn && INET_ECN_set_ce(skb)) {
 			/* If packet is ecn capable, mark it with a prob. */
 			q->stats.ecn_mark++;
-			enqueue = true;
 		}
 	}
 
-	/* we can enqueue the packet */
-	if (enqueue) {
-		q->stats.packets_in++;
-		if (qdisc_qlen(sch) > q->stats.maxq)
-			q->stats.maxq = qdisc_qlen(sch);
+	/* Now the packet may be enqueued */
+	q->stats.packets_in++;
+	if (qdisc_qlen(sch) > q->stats.maxq)
+		q->stats.maxq = qdisc_qlen(sch);
 
-		/* Timestamp the packet in order to calculate
-		 * * the queuing delay in the dequeue process.
-		 * */
-		__net_timestamp(skb);
-		return qdisc_enqueue_tail(skb, sch);
-	}
-
+	/* Timestamp the packet in order to calculate
+	 * * the queuing delay in the dequeue process.
+	 * */
+	__net_timestamp(skb);
+	return qdisc_enqueue_tail(skb, sch);
 out:
 	q->stats.dropped++;
 	return qdisc_drop(skb, sch, to_free);
@@ -231,7 +222,7 @@ static int shq_change(struct Qdisc *sch, struct nlattr *opt,
 	if (tb[TCA_SHQ_MAXP]) {
 		q->params.maxp = nla_get_u32(tb[TCA_SHQ_MAXP]);
 		maxp64 = (u64)q->params.maxp;
-		maxp64<<=SHQ_SCALE;
+		maxp64 <<= SHQ_SCALE;
 		q->vars.maxp64 = maxp64;
 	}
 
