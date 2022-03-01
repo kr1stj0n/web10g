@@ -83,7 +83,6 @@ static void shq_vars_init(struct shq_vars *vars)
 
 static bool should_mark(u64 prob)
 {
-	struct shq_sched_data *q = qdisc_priv(sch);
 	u64 rand = 0ULL;
 
 	/* Generate a 4 byte = 32-bit random number and store it in u64 */
