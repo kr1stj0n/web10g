@@ -81,7 +81,7 @@ static void shq_vars_init(struct shq_vars *vars)
 	vars->last	= psched_get_time();
 }
 
-static bool should_mark(struct Qdisc *sch)
+static bool should_mark(u64 prob)
 {
 	struct shq_sched_data *q = qdisc_priv(sch);
 	u64 rand = 0ULL;
@@ -89,7 +89,7 @@ static bool should_mark(struct Qdisc *sch)
 	/* Generate a 4 byte = 32-bit random number and store it in u64 */
 	rand = (u64)prandom_u32();
 
-	if (rand < q->stats.prob)
+	if (rand < prob)
 		return true;
 
 	return false;
@@ -143,10 +143,9 @@ static int shq_qdisc_enqueue(struct sk_buff *skb, struct Qdisc *sch,
 {
 	struct shq_sched_data *q = qdisc_priv(sch);
 	psched_tdiff_t delta;
-	bool enqueue = false;
 
-	q->vars.cur_qlen += qdisc_pkt_len(skb);
-	delta = psched_get_time() - q->vars.r_time;
+	q->vars.count += qdisc_pkt_len(skb);
+	delta = psched_get_time() - q->vars.last;
 
 	if (unlikely(qdisc_qlen(sch) >= sch->limit)) {
 		q->stats.overlimit++;
@@ -156,7 +155,7 @@ static int shq_qdisc_enqueue(struct sk_buff *skb, struct Qdisc *sch,
 	if (q->params.interval < delta)
 		calc_probability(sch, delta);
 
-	if (should_mark(&q->stats)) {
+	if (should_mark(q->stats.prob)) {
 		if (q->params.ecn && INET_ECN_set_ce(skb)) {
 			/* If packet is ecn capable, mark it with a prob. */
 			q->stats.ecn_mark++;
@@ -173,42 +172,6 @@ static int shq_qdisc_enqueue(struct sk_buff *skb, struct Qdisc *sch,
 	__net_timestamp(skb);
 	return qdisc_enqueue_tail(skb, sch);
 
-out:
-	q->stats.dropped++;
-	return qdisc_drop(skb, sch, to_free);
-}
-
-static int shq_qdisc_enqueue(struct sk_buff *skb, struct Qdisc *sch,
-			     struct sk_buff **to_free)
-{
-	struct shq_sched_data *q = qdisc_priv(sch);
-	psched_tdiff_t delta;
-
-	if (unlikely(qdisc_qlen(sch) >= sch->limit)) {
-		q->stats.overlimit++;
-		goto out;
-	}
-
-	q->vars.count += qdisc_pkt_len(skb);
-	delta = psched_get_time() - q->vars.last;
-
-	if (should_mark(sch)) {
-		if (q->params.ecn && INET_ECN_set_ce(skb)) {
-			/* If packet is ecn capable, mark it with a prob. */
-			q->stats.ecn_mark++;
-		}
-	}
-
-	/* Now the packet may be enqueued */
-	q->stats.packets_in++;
-	if (qdisc_qlen(sch) > q->stats.maxq)
-		q->stats.maxq = qdisc_qlen(sch);
-
-	/* Timestamp the packet in order to calculate
-	 * * the queuing delay in the dequeue process.
-	 * */
-	__net_timestamp(skb);
-	return qdisc_enqueue_tail(skb, sch);
 out:
 	q->stats.dropped++;
 	return qdisc_drop(skb, sch, to_free);
