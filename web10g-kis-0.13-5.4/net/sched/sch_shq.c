@@ -285,11 +285,11 @@ static int shq_dump(struct Qdisc *sch, struct sk_buff *skb)
 
 	if (nla_put_u32(skb, TCA_SHQ_LIMIT, sch->limit) ||
 			nla_put_u32(skb, TCA_SHQ_INTERVAL,
-				((u32)PSCHED_TICKS2NS(q->params.interval)) /
-				NSEC_PER_USEC) ||
+				((u32)PSCHED_TICKS2NS(q->params.interval)) / NSEC_PER_USEC) ||
 			nla_put_u32(skb, TCA_SHQ_MAXP, q->params.maxp) ||
 			nla_put_u32(skb, TCA_SHQ_ALPHA, q->params.alpha) ||
-			nla_put_u32(skb, TCA_SHQ_BANDWIDTH, q->params.bandwidth) * MSEC_PER_SEC ||
+	    		nla_put_u32(skb, TCA_SHQ_BANDWIDTH,
+				    q->params.bandwidth * MSEC_PER_SEC) ||
 			nla_put_u32(skb, TCA_SHQ_ECN, q->params.ecn))
 		goto nla_put_failure;
 
