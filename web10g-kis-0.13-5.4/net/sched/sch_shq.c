@@ -18,8 +18,7 @@
 #include <net/inet_ecn.h>
 
 #define SHQ_SCALE 16
-#define ONE 0x00010000
-
+#define MAX_PROB 0xffffffff
 
 /* parameters used */
 struct shq_params {
@@ -33,11 +32,11 @@ struct shq_params {
 
 /* variables used */
 struct shq_vars {
-	u64 avg_qlen;	/* average length of the queue */
-	u64 count;	/* byte count */
+	u64 avg_qlen;		/* average incoming load in the queue */
+	u64 count;		/* byte count */
 	u32 one_minus_alpha;	/* max bytes that can be received during the interval */
-	u32 avg_rate;	/* bytes per pschedtime tick, scaled */
-	u64 maxp64;
+	u32 avg_rate;		/* bytes per pschedtime tick, scaled */
+	u64 maxp64;		/* maxp << 32 stored in u64 */
 	psched_time_t last;	/* last time prob. was calculated */
 };
 
@@ -56,9 +55,9 @@ struct shq_stats {
 /* private data for the Qdisc */
 struct shq_sched_data {
 	struct shq_params params;
-	struct shq_vars vars;
-	struct shq_stats stats;
-	struct Qdisc *sch;
+	struct shq_vars   vars;
+	struct shq_stats  stats;
+	struct Qdisc     *sch;
 };
 
 static void shq_params_init(struct shq_params *params)
@@ -67,7 +66,7 @@ static void shq_params_init(struct shq_params *params)
 	params->interval  = PSCHED_NS2TICKS(10 * NSEC_PER_MSEC);      /* 10ms */
 	params->maxp      = 52428U;		/* 0.8 << 16 */
 	params->alpha     = 64225U;		/* 0.95 << 16 */
-	params->bandwidth = 12500000U; 		/* 100Mbps */
+	params->bandwidth = 125000000U;		/* 1000Mbps */
 	params->ecn       = true;
 }
 
@@ -86,7 +85,7 @@ static bool should_mark(u64 prob)
 	u64 rand = 0ULL;
 
 	/* Generate a 4 byte = 32-bit random number and store it in u64 */
-	rand = (u64)prandom_u32();
+	rand = (u64)prandom_u32_max(MAX_PROB);
 
 	if (rand < prob)
 		return true;
@@ -94,18 +93,26 @@ static bool should_mark(u64 prob)
 	return false;
 }
 
+static u32 max_bytes(u64 bpms, psched_tdiff_t delta)
+{
+	bpms *= PSCHED_TICKS2NS(delta);
+	do_div(bpms, NSEC_PER_MSEC);
+
+	return (u32)bpms;
+}
+
 static void calc_probability(struct Qdisc *sch, psched_tdiff_t delta)
 {
 	struct shq_sched_data *q = qdisc_priv(sch);
 	u64 avg_qlen	= q->vars.avg_qlen;
 	u64 count	= q->vars.count;
-	u64 max_bytes 	= 1ULL;
+	u32 bytes_max 	= 0U;
 
 	count += sch->qstats.backlog;	/* current queue length in bytes */
 	count <<= SHQ_SCALE;
 
 	avg_qlen = (u64)(avg_qlen * q->vars.one_minus_alpha) +
-		(u64)(count * q->params.alpha);
+		   (u64)(count * q->params.alpha);
 
 	avg_qlen >>= SHQ_SCALE;		/* Now avg_qlen is 16-bit scaled */
 	q->vars.avg_qlen = avg_qlen;
@@ -118,12 +125,10 @@ static void calc_probability(struct Qdisc *sch, psched_tdiff_t delta)
 	avg_qlen *= q->params.maxp;
 
 	/* Calculate the maximum number of incoming bytes during the interval */
-	max_bytes *= q->params.bandwidth / MSEC_PER_SEC;
-	max_bytes *= PSCHED_TICKS2NS(delta);
-	max_bytes /= NSEC_PER_MSEC;
+	bytes_max = max_bytes((u64)q->params.bandwidth, delta);
 
 	/* Calculate the probability as u64 32-bit scaled */
-	do_div(avg_qlen, (u32)max_bytes);
+	do_div(avg_qlen, bytes_max);
 
 	/* The probability value should not exceed Max. probability */
 	if (avg_qlen >= q->vars.maxp64)
@@ -143,13 +148,13 @@ static int shq_qdisc_enqueue(struct sk_buff *skb, struct Qdisc *sch,
 	struct shq_sched_data *q = qdisc_priv(sch);
 	psched_tdiff_t delta;
 
-	q->vars.count += qdisc_pkt_len(skb);
-	delta = psched_get_time() - q->vars.last;
-
 	if (unlikely(qdisc_qlen(sch) >= sch->limit)) {
 		q->stats.overlimit++;
 		goto out;
 	}
+
+	q->vars.count += qdisc_pkt_len(skb);
+	delta = psched_get_time() - q->vars.last;
 
 	if (q->params.interval < delta)
 		calc_probability(sch, delta);
@@ -224,11 +229,11 @@ static int shq_change(struct Qdisc *sch, struct nlattr *opt,
 
 	if (tb[TCA_SHQ_ALPHA]) {
 		q->params.alpha = nla_get_u32(tb[TCA_SHQ_ALPHA]);
-		q->vars.one_minus_alpha = ONE - q->params.alpha;
+		q->vars.one_minus_alpha = 65536U - q->params.alpha;
 	}
 
 	if (tb[TCA_SHQ_BANDWIDTH])
-		q->params.bandwidth = nla_get_u32(tb[TCA_SHQ_BANDWIDTH]);
+		q->params.bandwidth = nla_get_u32(tb[TCA_SHQ_BANDWIDTH]) / MSEC_PER_SEC;
 
 
 	if (tb[TCA_SHQ_ECN])
@@ -284,7 +289,7 @@ static int shq_dump(struct Qdisc *sch, struct sk_buff *skb)
 				NSEC_PER_USEC) ||
 			nla_put_u32(skb, TCA_SHQ_MAXP, q->params.maxp) ||
 			nla_put_u32(skb, TCA_SHQ_ALPHA, q->params.alpha) ||
-			nla_put_u32(skb, TCA_SHQ_BANDWIDTH, q->params.bandwidth) ||
+			nla_put_u32(skb, TCA_SHQ_BANDWIDTH, q->params.bandwidth) * MSEC_PER_SEC ||
 			nla_put_u32(skb, TCA_SHQ_ECN, q->params.ecn))
 		goto nla_put_failure;
 
