@@ -90,8 +90,8 @@ static int hull_qdisc_enqueue(struct sk_buff *skb, struct Qdisc *sch,
 	/* Increase the counter by the size of the packet */
 	q->vars.counter += qdisc_pkt_len(skb);
 
-	/* if HULL counter > markth, then HULL will mark the packet. */
-	if (q->params.markth < (u32)q->vars.counter) {
+	/* if HULL counter >= markth, then HULL will mark the packet. */
+	if (q->params.markth <= (u32)q->vars.counter) {
 		if (INET_ECN_set_ce(skb))
 			/* If packet is ecn capable, mark it with ECN flag. */
 			q->stats.ecn_mark++;

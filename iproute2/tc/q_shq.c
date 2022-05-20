@@ -45,8 +45,8 @@ static int shq_parse_opt(struct qdisc_util *qu, int argc, char **argv,
 {
 	unsigned int limit    = 1000;          /* default: 1000p */
 	unsigned int interval = 10000;         /* default: 10ms in usecs */
-        double       maxp     = 1.0;
-        double       alpha    = 0.25;
+        double       maxp     = 0.8;
+        double       alpha    = 0.95;
         unsigned int bw       = 12500000;      /* default: 100mbit in bps */
 	int          ecn      = 1;             /* enable ecn by default */
         __u32        sc_maxp;
